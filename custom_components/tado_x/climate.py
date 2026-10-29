@@ -17,6 +17,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from .device_helpers import via_device_kwargs
 from .const import (
     DEFAULT_TIMER_DURATION,
     DOMAIN,
@@ -56,7 +57,11 @@ class TadoXClimate(CoordinatorEntity[TadoXDataUpdateCoordinator], ClimateEntity)
 
     _attr_has_entity_name = True
     _attr_name = None
-    _attr_temperature_unit = UnitOfTemperature.CELSIUS
+    # HA 2026.11 renames _attr_temperature_unit (removed in 2027.11).
+    if hasattr(ClimateEntity, "native_temperature_unit"):
+        _attr_native_temperature_unit = UnitOfTemperature.CELSIUS
+    else:
+        _attr_temperature_unit = UnitOfTemperature.CELSIUS
     _attr_supported_features = (
         ClimateEntityFeature.TARGET_TEMPERATURE
         | ClimateEntityFeature.PRESET_MODE
@@ -96,7 +101,7 @@ class TadoXClimate(CoordinatorEntity[TadoXDataUpdateCoordinator], ClimateEntity)
             name=room_name,
             manufacturer="Tado",
             model="Tado X Room",
-            via_device=(DOMAIN, str(self.coordinator.home_id)),
+            **via_device_kwargs(self, (DOMAIN, str(self.coordinator.home_id))),
         )
 
     @property

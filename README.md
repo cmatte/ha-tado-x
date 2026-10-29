@@ -1,5 +1,7 @@
 # Tado X Integration for Home Assistant
 
+> **Fork** of [exabird/ha-tado-x](https://github.com/exabird/ha-tado-x) with fixes for the Home Assistant 2027.7/2027.8/2027.11 deprecations (`via_device`, `location_name`, `temperature_unit`), sent upstream as a pull request. Same `tado_x` domain: entity ids do not change.
+
 [![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
 [![GitHub Release](https://img.shields.io/github/v/release/exabird/ha-tado-x)](https://github.com/exabird/ha-tado-x/releases)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-Support-yellow?style=flat&logo=buy-me-a-coffee)](https://buymeacoffee.com/exabird)

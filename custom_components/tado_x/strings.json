@@ -237,7 +237,7 @@
     },
     "set_holiday_mode": {
       "name": "Set holiday mode",
-      "description": "Enable or disable holiday mode and optionally set its start/end date. Requires an Auto-Assist (Premium) subscription. Dates are ISO-8601 date-time strings.",
+      "description": "Enable or disable holiday mode and optionally set its dates. Use local date/time pickers or timezone-aware ISO-8601 timestamps in YAML. Requires Auto-Assist (Premium).",
       "fields": {
         "device_id": {
           "name": "Tado X Home device",
@@ -249,11 +249,11 @@
         },
         "start_date": {
           "name": "Start date",
-          "description": "ISO-8601 start date-time (e.g. 2026-12-20T08:00:00Z). Optional."
+          "description": "Optional local date/time; must be on a 30-minute boundary (HH:00 or HH:30). YAML also accepts ISO-8601 with timezone."
         },
         "end_date": {
           "name": "End date",
-          "description": "ISO-8601 end date-time (e.g. 2027-01-05T20:00:00Z). Optional."
+          "description": "Optional local date/time; must be on a 30-minute boundary (HH:00 or HH:30). YAML also accepts ISO-8601 with timezone."
         }
       }
     },

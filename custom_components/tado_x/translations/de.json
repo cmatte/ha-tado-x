@@ -121,11 +121,11 @@
         },
         "start_date": {
           "name": "Startdatum",
-          "description": "Startdatum im Format JJJJ-MM-TT oder ISO-8601-Datum/Uhrzeit."
+          "description": "Optional local date/time; YAML also accepts ISO-8601 with timezone."
         },
         "end_date": {
           "name": "Enddatum",
-          "description": "Enddatum im Format JJJJ-MM-TT oder ISO-8601-Datum/Uhrzeit."
+          "description": "Optional local date/time; YAML also accepts ISO-8601 with timezone."
         }
       }
     },
@@ -249,11 +249,11 @@
         },
         "start_date": {
           "name": "Startdatum",
-          "description": "Startdatum im Format JJJJ-MM-TT oder ISO-8601-Datum/Uhrzeit."
+          "description": "Optionale lokale Datums-/Uhrzeitangabe. Die Uhrzeit muss auf einer 30-Minuten-Grenze liegen (HH:00 oder HH:30). In YAML ist auch ISO 8601 mit Zeitzone möglich."
         },
         "end_date": {
           "name": "Enddatum",
-          "description": "Enddatum im Format JJJJ-MM-TT oder ISO-8601-Datum/Uhrzeit."
+          "description": "Optionale lokale Datums-/Uhrzeitangabe. Die Uhrzeit muss auf einer 30-Minuten-Grenze liegen (HH:00 oder HH:30). In YAML ist auch ISO 8601 mit Zeitzone möglich."
         }
       }
     },

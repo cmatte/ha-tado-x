@@ -249,11 +249,11 @@
         },
         "start_date": {
           "name": "Data inizio",
-          "description": "Data di inizio nel formato AAAA-MM-GG o data e ora ISO 8601."
+          "description": "Data e ora locali facoltative. L’ora deve essere su intervalli di 30 minuti (HH:00 o HH:30). YAML accetta anche ISO 8601 con fuso orario."
         },
         "end_date": {
           "name": "Data fine",
-          "description": "Data di fine nel formato AAAA-MM-GG o data e ora ISO 8601."
+          "description": "Data e ora locali facoltative. L’ora deve essere su intervalli di 30 minuti (HH:00 o HH:30). YAML accetta anche ISO 8601 con fuso orario."
         }
       }
     },

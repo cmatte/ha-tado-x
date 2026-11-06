@@ -2,9 +2,9 @@
 
 An independently maintained custom integration for controlling and monitoring **Tado X** systems in [Home Assistant](https://www.home-assistant.io/).
 
-Tado X Enhanced builds on the original [Tado X integration by exabird](https://github.com/exabird/ha-tado-x), adding multi-home support, Home and Away schedule management, reusable schedule profiles, domestic hot-water controls, richer room diagnostics and API quota forecasting.
+Tado X Enhanced builds on the original [Tado X integration by exabird](https://github.com/exabird/ha-tado-x) (version v1.8.11), adding multi-home support, Home and Away schedule management, reusable schedule profiles, domestic hot-water controls, richer room diagnostics and API quota forecasting.
 
-> **Project status:** Current release version: `1.1.0` (prepared for publication). See [GitHub Releases](https://github.com/rleatherb/ha-tado-x-enhanced/releases) for the latest published version. Some features depend on your Tado hardware, subscription and API responses. This is a cloud-based integration and is subject to Tado API limits.
+> **Project status:** Version: `1.1.1`. See [GitHub Releases](https://github.com/rleatherb/ha-tado-x-enhanced/releases) for the latest published version. Some features depend on your Tado hardware, subscription and API responses. This is a cloud-based integration and is subject to Tado API limits. Code development and documentation assisted by AI.
 
 **[Changelog](CHANGELOG.md)** · [Report an issue](https://github.com/rleatherb/ha-tado-x-enhanced/issues) · [Releases](https://github.com/rleatherb/ha-tado-x-enhanced/releases)
 
@@ -177,6 +177,7 @@ Project maintenance and GitHub code ownership: [@rleatherb](https://github.com/r
 
 
 ### Holiday Mode
+
 The Tado X Home device has Holiday Mode, Holiday Status, Holiday Start, Holiday End and Refresh Holiday Mode entities. An expired holiday switched on through Home Assistant is rescheduled to start immediately for seven days. Explicit dates in `tado_x.set_holiday_mode` remain unchanged. Holiday state refreshes independently at the configured schedule polling interval and at holiday boundaries.
 
 ### Holiday date display and hot-water states
@@ -184,3 +185,43 @@ The Tado X Home device has Holiday Mode, Holiday Status, Holiday Start, Holiday 
 The Home device now also provides **Holiday Start (Local)** and **Holiday End (Local)**, displaying absolute local dates and times. The original timestamp entities remain unchanged for automations. During active holidays, `HOLIDAY_MODE_OFF` is recognised as a hot-water state and shown as Off by the Hot Water Mode selector. Holiday changes refresh hot-water state promptly.
 
 **Known Tado behaviour:** After cancelling Holiday Mode, Tado may leave domestic hot water Off instead of restoring Schedule, including when the holiday was controlled entirely in the Tado app. Tado X Enhanced reports the API state and does not automatically restore Schedule. If necessary, restore Schedule manually.
+
+This appears to be a bug in the current Tado implementation that is found if you have water heating set to Scheduled, with Off when Away, and Holiday Mode is set while the status is Away. On ending Holiday Mode, the Hot Water status reverts to permanently Off rather than Scheduled.
+
+The following automation example can be used to ensure that Hot Water Mode is always reset to Scheduled whenever Holiday Mode ends (replace `sensor.home_holiday_status` and `select.home_hot_water_mode` with the settings for your Tado home).
+
+```yaml
+alias: Restore hot water schedule mode when holiday mode ends
+description: ''
+triggers:
+  - trigger: state
+    entity_id:
+      - sensor.home_holiday_status
+    to:
+      - ended
+      - 'off'
+    id: Holiday Status Ended
+conditions: []
+actions:
+  - choose:
+      - conditions:
+          - condition: trigger
+            id:
+              - Holiday Status Ended
+        sequence:
+          - delay:
+              hours: 0
+              minutes: 1
+              seconds: 0
+              milliseconds: 0
+          - action: select.select_option
+            metadata: {}
+            target:
+              entity_id: select.home_hot_water_mode
+            data:
+              option: SCHEDULE
+mode: queued
+max: 10
+
+```
+

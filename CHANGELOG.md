@@ -8,6 +8,18 @@ The project is independently maintained and is derived from the original Tado X 
 
 **[Readme](README.md)** · [Report an issue](https://github.com/rleatherb/ha-tado-x-enhanced/issues) · [Releases](https://github.com/rleatherb/ha-tado-x-enhanced/releases)
 
+## [1.1.1](https://github.com/rleatherb/ha-tado-x-enhanced/releases/tag/v1.1.1) - 2026-11-06
+
+### Fixed
+
+- Restore local date/time selectors for `set_holiday_mode` while retaining ISO-8601 YAML support and explicitly document the required 30-minute time boundaries.
+- Submit only writable Holiday Mode fields when updating dates instead of echoing the full GET response, and preserve an omitted start/end boundary.
+- Verify date updates by reading back the Tado settings; raise a Home Assistant error if Tado does not retain the requested dates or changes room/hot-water settings.
+
+### Validation
+
+- Maintainer confirmed that date-bearing Holiday Mode changes now work against the live Tado API. Full regression testing on both homes has not been reported; package checks are static only.
+
 ## [1.1.0](https://github.com/rleatherb/ha-tado-x-enhanced/releases/tag/v1.1.0) - 2026-11-06
 
 ### Added

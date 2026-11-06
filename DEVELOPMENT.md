@@ -2,18 +2,18 @@
 
 **Repository:** https://github.com/rleatherb/ha-tado-x-enhanced
 **Integration domain:** `tado_x`
-**Previous published release:** `v1.0.0`
-**Release being prepared:** `v1.1.0`
-**Status:** Release candidate validated in Home Assistant 2026.11; awaiting GitHub publication.
+**Previous published release:** `v1.1.0`
+**Release being prepared:** `v1.1.1`
+**Status:** Holiday Mode hotfix candidate; date changes confirmed working by maintainer, full regression testing and GitHub publication pending.
 **Updated:** 6 November 2026
 
 ## Current development position
 
-DEV-001 Holiday Mode implementation is included: home-level switch, status and date sensors, manual refresh, boundary handling, local date presentation, and holiday hot-water state mapping. Existing schedules, timers, history, API monitoring and multi-home behaviour are intended to remain unchanged; runtime regression testing is still required.
+DEV-002 urgent Holiday Mode fix builds on DEV-001, which introduced: home-level switch, status and date sensors, manual refresh, boundary handling, local date presentation, and holiday hot-water state mapping. Existing schedules, timers, history, API monitoring and multi-home behaviour are intended to remain unchanged; runtime regression testing is still required.
 
 Stage G user testing (6 November 2026) showed that cancellation through the Tado app itself could leave hot water `OFF` instead of restoring Schedule. Home Assistant cancellation returned `AWAY_OFF` temporarily and then raw Tado API readings changed to `OFF` on the next poll. This supports, but does not conclusively prove, a Tado-side restoration issue. No automatic workaround is implemented.
 
-The Stage C–F temporary diagnostic logging has been removed. Minimal `enabled`-only PATCH remains for toggle-only Holiday Mode changes; explicit date updates continue to use a read-modify-write request. Holiday Mode GET calls and polling cadence were not changed in this hardening pass. The potential duplicate settings read remains a future quota-conscious review item, not an untested release optimisation.
+The Stage C–F temporary diagnostic logging has been removed. Minimal `enabled`-only PATCH remains for toggle-only Holiday Mode changes; explicit date updates use a filtered writable-fields PATCH and read-back verification. Holiday Mode GET calls and polling cadence were not changed in this hardening pass. The potential duplicate settings read remains a future quota-conscious review item, not an untested release optimisation.
 
 ## Outstanding release gates
 
@@ -32,11 +32,11 @@ The Stage C–F temporary diagnostic logging has been removed. Minimal `enabled`
 5. Discuss architectural implications before implementation. Make minimal, focused changes.
 6. Update `services.yaml`, `strings.json`, relevant `translations/*.json`, documentation and `CHANGELOG.md` when behaviour changes.
 7. Validate Python syntax, JSON/YAML parsing, package layout, ZIP integrity and internal consistency. Record live Home Assistant/Tado API tests separately; static validation is not runtime verification.
-8. Do not bump the version or publish a release without explicit approval.
+8. Do not bump the version or publish a release without explicit approval. Version 1.1.1 is prepared under the maintainer’s instruction; publication remains a separate step.
 
 ## Working procedure
 
-1. Start from the latest `Tado_X_Enhanced_Development.zip` and check its relationship to the `develop` branch.
+1. Start from the latest complete integration candidate and check its relationship to the `develop` branch.
 2. Investigate an issue, agree the design, and record decisions in this file.
 3. Implement minimal changes and produce complete replacement files or an updated complete development ZIP.
 4. Perform and report static validation, then install and test in Home Assistant as appropriate.

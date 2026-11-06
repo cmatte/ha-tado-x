@@ -67,4 +67,4 @@ Read and write operations require Tado cloud access and are subject to API quota
 
 
 ### Holiday Mode and the home switch
-`set_holiday_mode` continues to accept explicit ISO-8601 timestamps, including past start dates. The Holiday Mode switch provides automatic seven-day rescheduling only when the stored period has expired.
+`set_holiday_mode` offers local date/time pickers for optional start and end dates. YAML also accepts timezone-aware ISO-8601 timestamps. Both start and end times must be on a **30-minute boundary (HH:00 or HH:30)**. Supplying one date preserves the other existing boundary; date updates are checked against Tado after submission and raise an error if the dates are not retained. Explicit past start dates are accepted. The Holiday Mode switch provides automatic seven-day rescheduling only when the stored period has expired.

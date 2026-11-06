@@ -249,11 +249,11 @@
         },
         "start_date": {
           "name": "Date de début",
-          "description": "Date de début ; format AAAA-MM-JJ ou date et heure ISO 8601 selon l’action."
+          "description": "Date et heure locales facultatives. L’heure doit être à :00 ou :30 (par tranches de 30 minutes). YAML accepte aussi ISO 8601 avec fuseau horaire."
         },
         "end_date": {
           "name": "Date de fin",
-          "description": "Date de fin ; format AAAA-MM-JJ ou date et heure ISO 8601 selon l’action."
+          "description": "Date et heure locales facultatives. L’heure doit être à :00 ou :30 (par tranches de 30 minutes). YAML accepte aussi ISO 8601 avec fuseau horaire."
         }
       }
     },

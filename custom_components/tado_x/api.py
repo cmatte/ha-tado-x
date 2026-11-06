@@ -992,25 +992,62 @@ class TadoXApi:
         if not self._home_id:
             raise TadoXApiError("Home ID not set")
 
-        # Do not PATCH an empty configuration if the initial GET fails:
-        # the request must preserve per-room and hot-water holiday settings.
+        # Only send writable fields. Echoing a GET response back to PATCH can
+        # include server-managed properties (such as active) and silently fail.
+        # Retain existing dates when the caller supplies only one boundary.
         current = await self.get_holiday_mode()
         if not isinstance(current.get("roomSettings"), dict):
             raise TadoXApiError("Holiday settings incomplete; refusing unsafe update")
 
-        # Toggle-only updates must not resubmit unrelated holiday settings.
-        toggle_only = start_date is None and end_date is None
-        body = {"enabled": enabled} if toggle_only else dict(current)
-        if start_date is not None:
-            body["startDate"] = start_date
-        if end_date is not None:
-            body["endDate"] = end_date
+        date_update = start_date is not None or end_date is not None
+        body: dict[str, Any] = {"enabled": enabled}
+        if date_update:
+            body["startDate"] = start_date if start_date is not None else current.get("startDate")
+            body["endDate"] = end_date if end_date is not None else current.get("endDate")
+            if not body["startDate"] or not body["endDate"]:
+                raise TadoXApiError(
+                    "Both holiday dates must be available to update the holiday period"
+                )
+            try:
+                start = datetime.fromisoformat(body["startDate"].replace("Z", "+00:00"))
+                end = datetime.fromisoformat(body["endDate"].replace("Z", "+00:00"))
+                if start.tzinfo is None or end.tzinfo is None or end <= start:
+                    raise ValueError("invalid date range")
+            except (TypeError, ValueError, AttributeError) as err:
+                raise TadoXApiError("Holiday end must be after start; both dates must include a timezone") from err
 
         await self._request(
             "PATCH",
             f"{TADO_HOPS_API_URL}/homes/{self._home_id}/settings/holidayMode",
             json_data=body,
         )
+
+        if date_update:
+            # Tado can acknowledge a PATCH without applying the date change.
+            # A read-back also ensures the minimal PATCH did not alter settings.
+            actual = await self.get_holiday_mode()
+            def same_instant(left: Any, right: Any) -> bool:
+                try:
+                    return datetime.fromisoformat(str(left).replace("Z", "+00:00")) == datetime.fromisoformat(str(right).replace("Z", "+00:00"))
+                except ValueError:
+                    return False
+
+            if (
+                actual.get("enabled") is not enabled
+                or not same_instant(actual.get("startDate"), body["startDate"])
+                or not same_instant(actual.get("endDate"), body["endDate"])
+            ):
+                raise TadoXApiError(
+                    "Tado acknowledged the holiday update but did not retain the "
+                    "requested enabled state and dates. Check the Tado app and "
+                    "Home Assistant logs."
+                )
+            for field in ("roomSettings", "hotWaterSettings"):
+                if field in current and actual.get(field) != current[field]:
+                    raise TadoXApiError(
+                        f"Tado changed {field} while updating holiday dates; "
+                        "review the holiday settings in the Tado app"
+                    )
 
     # Running Times endpoints (Minder API)
     async def get_running_times(self, from_date: str, to_date: str) -> dict[str, Any]:

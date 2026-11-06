@@ -1,12 +1,12 @@
 # Tado X Enhanced — Technical Architecture
 
-**Release baseline:** Tado X Enhanced `1.0.0` candidate, derived from internal development v38  
-**Source reviewed:** `Latest complete source.zip`, `custom_components/tado_x/` (30 October 2026)  
+**Documented release:** Tado X Enhanced `1.1.1`  
+**Implementation source:** `custom_components/tado_x/` in this repository  
 **Integration domain:** `tado_x`  
 **Repository:** https://github.com/rleatherb/ha-tado-x-enhanced  
 **Audience:** maintainers and contributors
 
-> This is a source-derived description of the implementation, not a record of live Home Assistant or Tado API testing. It supersedes `Tado_X_v34_Implementation_Guide.md`, whose action and profile descriptions are no longer current. Behaviour depends on Tado hardware, subscription, account capabilities and API responses.
+> This document describes the source implementation. It does not constitute comprehensive live Home Assistant or Tado API validation. Behaviour depends on Tado hardware, subscription, account capabilities and API responses.
 
 ## 1. Design goals and invariants
 
@@ -190,7 +190,7 @@ During entry setup, rooms without a saved **Normal** profile have their current 
 
 The manager compares live snapshots against effective named profiles. It canonicalises Home blocks by day, boundaries, power and temperature and also compares Away settings. A matching profile is shown in the room's restore/save selectors; otherwise the state is **Custom**. A failed read is treated as unavailable rather than incorrectly reporting Custom. The last-applied profile helps choose between multiple matches.
 
-The room device exposes **Restore schedule profile** and **Save schedule profile** selects, plus **Refresh Schedule**. The former **Restore default schedule profile** and **Save default schedule profile** device selectors were removed in v38; their functions remain available through `tado_x.restore_schedule_profile_default` and `tado_x.save_schedule_profile_default` actions. Room selectors contain profile names only, not suffixed `… default` entries.
+The room device exposes **Restore schedule profile** and **Save schedule profile** selects, plus **Refresh Schedule**. The former **Restore default schedule profile** and **Save default schedule profile** device selectors are not exposed; their functions remain available through `tado_x.restore_schedule_profile_default` and `tado_x.save_schedule_profile_default` actions. Room selectors contain profile names only, not suffixed `… default` entries.
 
 The profile actions use a free-text `profile` input, checked against the home-specific known names. Built-in names cannot be deleted. A custom profile name is created before it can be saved/restored, and deleting a custom name removes that class and its saved room/default data for the selected home.
 
@@ -240,7 +240,7 @@ The original and enhanced integrations cannot be installed simultaneously becaus
 
 Before accepting a code change:
 
-1. Compare against the **latest complete source archive or Git commit**, not a reconstructed subset.
+1. Compare against the **latest complete repository source or release tag**, not a reconstructed subset.
 2. Inspect affected modules and their dependencies, including action schemas, entities and translation keys.
 3. Run Python syntax checks and parse JSON/YAML; check ZIP integrity and repository layout.
 4. Test startup, unload/reload, reauthentication and optional-feature combinations in Home Assistant where relevant.
@@ -264,10 +264,16 @@ Before accepting a code change:
 
 ## 15. Provenance and validation scope
 
-This guide was drafted by inspecting the supplied **`Latest complete source.zip`** release candidate, including the integration's Python modules, manifest and action definitions. The earlier v34 guide was used only as a historical cross-check; current implementation details, particularly the 19 actions, custom profile classes, default actions and factory Away temperatures, come from the current source. No live Home Assistant instance or Tado API was exercised in preparing this document.
+This document describes the implementation packaged with Tado X Enhanced `1.1.1`, including the integration modules, manifest, action definitions and schedule-profile handling. Source inspection and static validation are distinct from live integration tests. For release-specific changes and test scope, consult [CHANGELOG.md](../CHANGELOG.md).
 
 Tado X Enhanced is an independently maintained MIT-licensed derivative of Exabird's original integration. Retain the original and subsequent copyright notices in the repository's [LICENSE](../LICENSE).
 
+### 15.1 Holiday Mode state management
 
-### DEV-001 Holiday state manager
-`holiday_mode.py` maintains per-coordinator holiday data, polls independently of room schedule comparison, schedules local callbacks for start/end transitions, and notifies home-level entities. A targeted refresh follows action writes and button presses.
+`holiday_mode.py` maintains a home-scoped Holiday Mode snapshot, polls independently of room schedule comparison, schedules callbacks at holiday start and end boundaries, and notifies home-level entities. Targeted refreshes follow Holiday Mode actions and button presses. The Holiday Mode status is derived from the enabled flag and the configured date interval.
+
+The `tado_x.set_holiday_mode` action accepts optional start and end dates, converts supported Home Assistant local date/time and ISO-8601 input to UTC, and requires each supplied time to be on a 30-minute boundary. Enabling or disabling without date changes uses a minimal request. Date changes use a targeted update and server read-back verification so that an ignored update is reported as an error rather than silently treated as successful. See [ACTIONS.md](ACTIONS.md) for action syntax.
+
+### 15.2 Holiday Mode and domestic hot water
+
+Tado may leave hot water switched Off after Holiday Mode is cancelled, including when Holiday Mode was controlled through the Tado app. The integration reports the Tado API state rather than automatically changing the hot-water schedule. The [README](../README.md) describes an optional Home Assistant automation for restoring Schedule after Holiday Mode ends.

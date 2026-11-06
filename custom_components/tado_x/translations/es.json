@@ -249,11 +249,11 @@
         },
         "start_date": {
           "name": "Fecha de inicio",
-          "description": "Fecha de inicio; formato AAAA-MM-DD o fecha y hora ISO 8601 según la acción."
+          "description": "Fecha y hora local opcionales. La hora debe ser en punto o y media (HH:00 o HH:30). YAML también admite ISO 8601 con zona horaria."
         },
         "end_date": {
           "name": "Fecha de fin",
-          "description": "Fecha de fin; formato AAAA-MM-DD o fecha y hora ISO 8601 según la acción."
+          "description": "Fecha y hora local opcionales. La hora debe ser en punto o y media (HH:00 o HH:30). YAML también admite ISO 8601 con zona horaria."
         }
       }
     },

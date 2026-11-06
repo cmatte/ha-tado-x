@@ -258,7 +258,7 @@ Before accepting a code change:
 - [SCHEDULES.md](SCHEDULES.md) — schedules and profile workflows
 - [ACTIONS.md](ACTIONS.md) — Home Assistant action reference
 - [ENTITIES.md](ENTITIES.md) — device/entity/attribute reference
-- [EXAMPLES.md](EXAMPLES.md) — practical YAML examples (to be completed)
+- [EXAMPLES.md](EXAMPLES.md) — practical YAML examples
 - [CONTRIBUTING.md](../CONTRIBUTING.md) — contributor guidance
 - [CHANGELOG.md](../CHANGELOG.md) — release history
 

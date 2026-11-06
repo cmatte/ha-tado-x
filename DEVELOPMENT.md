@@ -1,27 +1,31 @@
 # Tado X Enhanced — Development Status
 
-**Repository:** https://github.com/rleatherb/ha-tado-x-enhanced
-**Integration domain:** `tado_x`
-**Previous published release:** `v1.1.0`
-**Release being prepared:** `v1.1.1`
-**Status:** Holiday Mode hotfix candidate; date changes confirmed working by maintainer, full regression testing and GitHub publication pending.
+**Repository:** https://github.com/rleatherb/ha-tado-x-enhanced  
+**Integration domain:** `tado_x`  
+**Latest published release:** `v1.1.1` (6 November 2026)  
+**Development baseline:** `v1.1.1`; `main` and `develop` synchronized following release, as reported by the maintainer  
+**Status:** Release complete; next development cycle open. No subsequent functional changes recorded.  
 **Updated:** 6 November 2026
 
 ## Current development position
 
-DEV-002 urgent Holiday Mode fix builds on DEV-001, which introduced: home-level switch, status and date sensors, manual refresh, boundary handling, local date presentation, and holiday hot-water state mapping. Existing schedules, timers, history, API monitoring and multi-home behaviour are intended to remain unchanged; runtime regression testing is still required.
+Version `v1.1.1` is the published baseline for further work. The DEV-002 Holiday Mode hotfix followed DEV-001's introduction of home-level Holiday Mode controls, status/date sensors, manual refresh, boundary handling, local date presentation and holiday hot-water state mapping. The hotfix restored local date/time selectors and corrected date-bearing requests by sending only writable settings, preserving an omitted boundary and verifying dates through a server read-back.
 
-Stage G user testing (6 November 2026) showed that cancellation through the Tado app itself could leave hot water `OFF` instead of restoring Schedule. Home Assistant cancellation returned `AWAY_OFF` temporarily and then raw Tado API readings changed to `OFF` on the next poll. This supports, but does not conclusively prove, a Tado-side restoration issue. No automatic workaround is implemented.
+The maintainer confirmed that date-bearing Holiday Mode changes work against the live Tado API. This is not evidence of a complete `v1.1.1` regression run on both homes. The existing schedules, timers, historical data, API monitoring and multi-home behaviour are intended to remain unchanged; relevant live regression tests should be performed for future functional changes.
 
-The Stage C–F temporary diagnostic logging has been removed. Minimal `enabled`-only PATCH remains for toggle-only Holiday Mode changes; explicit date updates use a filtered writable-fields PATCH and read-back verification. Holiday Mode GET calls and polling cadence were not changed in this hardening pass. The potential duplicate settings read remains a future quota-conscious review item, not an untested release optimisation.
+Holiday Mode cancellation can leave domestic hot water `OFF` rather than returning to Schedule, including when cancelled through the Tado app. This appears to be Tado-side behaviour, but its cause has not been conclusively established. The integration reports the API state and does not automatically restore Schedule. The README documents an optional Home Assistant automation to restore it.
 
-## Outstanding release gates
+Temporary DEV-002 diagnostic logging was removed. Toggle-only Holiday Mode changes retain a minimal `enabled` request; date-bearing changes use filtered writable fields and read-back verification. Holiday Mode polling cadence was not changed. A potential duplicate settings read remains an optional future API-quota review item, not an implemented optimisation.
 
-1. Compare with published GitHub release/tag and choose next semantic version.
-2. Install candidate in Home Assistant and check both homes, entities and existing automations.
-3. Regression test schedule profiles, extended climate timer, hot-water select, holiday switch/date actions, history, API monitoring and lifecycle.
-4. Confirm translation wording and action UI labels in Home Assistant.
-5. Accept candidate before promoting Project Sources or publishing a release.
+## Next-cycle verification priorities
+
+1. Establish the next change against the published `v1.1.1` tag and the latest complete development package.
+2. Verify both configured homes, entity identities, device associations and existing automations when changes could affect them.
+3. Regression-test schedule profiles, extended climate timer, hot-water selection, Holiday Mode, historical data, API monitoring and setup/unload as appropriate to the change.
+4. Check translations, Home Assistant action selectors and labels after user-facing changes.
+5. Measure or assess additional Tado API calls before introducing new polling or verification requests.
+
+These are future development checks, **not** outstanding conditions for the already published `v1.1.1` release.
 
 ## Development rules
 
@@ -32,19 +36,19 @@ The Stage C–F temporary diagnostic logging has been removed. Minimal `enabled`
 5. Discuss architectural implications before implementation. Make minimal, focused changes.
 6. Update `services.yaml`, `strings.json`, relevant `translations/*.json`, documentation and `CHANGELOG.md` when behaviour changes.
 7. Validate Python syntax, JSON/YAML parsing, package layout, ZIP integrity and internal consistency. Record live Home Assistant/Tado API tests separately; static validation is not runtime verification.
-8. Do not bump the version or publish a release without explicit approval. Version 1.1.1 is prepared under the maintainer’s instruction; publication remains a separate step.
+8. Do not bump the version or publish a release without explicit approval.
 
 ## Working procedure
 
-1. Start from the latest complete integration candidate and check its relationship to the `develop` branch.
-2. Investigate an issue, agree the design, and record decisions in this file.
+1. Start from the latest complete integration source and check its relationship to the `develop` branch.
+2. Investigate an issue, agree the design and record decisions in this file.
 3. Implement minimal changes and produce complete replacement files or an updated complete development ZIP.
 4. Perform and report static validation, then install and test in Home Assistant as appropriate.
 5. Record test results, unresolved problems and any follow-up corrections.
 6. Commit accepted changes to `develop`, with descriptive commit messages.
-7. Replace the Project's development ZIP and update this file and the relevant individual documentation sources to match the accepted baseline.
+7. Replace the Project's development ZIP and update this file and relevant individual documentation Sources to match the accepted baseline.
 8. When release scope and testing are agreed, prepare release notes, agree a semantic version, merge to `main`, tag and publish. Do not do this automatically.
 
 ## Previous investigations
 
-The Stage C–G diagnostic builds and associated Home Assistant logs are retained separately as historical evidence, rather than copied into the release-facing changelog. See the release-readiness audit dated 6 November 2026 for detailed findings and regression matrix.
+DEV-001 introduced Holiday Mode entities and state management in `v1.1.0`; DEV-002 corrected date updates in `v1.1.1`. The Stage C–G diagnostic builds and associated Home Assistant logs are historical evidence rather than release-facing changelog entries. The `CHANGELOG.md` records published changes and their stated validation scope.

@@ -151,7 +151,7 @@ These calculations do not require additional API calls. They are estimates, not 
 - Tado's API is not controlled by this project and may change or impose request limits.
 - Multiple homes are supported, but verify service targeting and quota reporting when configuring more than one home.
 - The minimum supported Home Assistant release has **not yet been established by testing**. Do not infer compatibility solely from the manifest version.
-- The original `1.0.0` release was validated on a separate Home Assistant test installation, including a HACS handover from the original Exabird integration. Version `1.1.0` has passed regression testing, including Home Assistant 2026.11 climate compatibility checks. Compatibility with every earlier installation and Home Assistant release has not been established.
+- The original `1.0.0` release was validated on a separate Home Assistant test installation, including a HACS handover from the original Exabird integration. Version `1.1.0` passed regression testing, including Home Assistant 2026.11 climate compatibility checks. For `1.1.1`, the maintainer confirmed that the Holiday Mode date-update correction works against the live Tado API; a complete regression run on both homes has not been reported. Compatibility with every earlier installation and Home Assistant release has not been established.
 
 ## Releases and changes
 

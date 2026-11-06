@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Final
 
 import voluptuous as vol
@@ -14,6 +14,7 @@ from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady, HomeAssistantError
 from homeassistant.helpers import config_validation as cv, device_registry as dr, entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.util import dt as dt_util
 
 from .api import TadoXApi, TadoXApiError, TadoXAuthError, summarize_day_report
 from .const import (
@@ -40,6 +41,7 @@ from .const import (
 )
 from .coordinator import TadoXDataUpdateCoordinator
 from .schedule_profiles import ProfileManager, DEFAULT_PROFILES, base_default_name
+from .holiday_mode import HolidayModeManager
 from .const import CONF_ENABLE_SCHEDULE_POLLING, CONF_SCHEDULE_POLL_INTERVAL, DEFAULT_SCHEDULE_POLL_INTERVAL
 
 _LOGGER = logging.getLogger(__name__)
@@ -405,6 +407,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Only perform automatic startup comparison when periodic checks are enabled.
     if profile_manager.poll_enabled:
         entry.async_create_background_task(hass, profile_manager.poll(), "Tado X initial schedule profile comparison")
+
+    holiday_manager = HolidayModeManager(
+        hass, coordinator,
+        entry.data.get(CONF_SCHEDULE_POLL_INTERVAL, DEFAULT_SCHEDULE_POLL_INTERVAL),
+    )
+    coordinator.holiday_mode_manager = holiday_manager
+    await holiday_manager.start()
 
     # Register services
     #
@@ -841,9 +850,36 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         """Return the current holiday mode settings."""
         service_coordinator = get_home_coordinator(call)
         try:
-            return await service_coordinator.api.get_holiday_mode()
+            await service_coordinator.holiday_mode_manager.refresh()
+            return service_coordinator.holiday_mode_manager.data
         except TadoXApiError as err:
             raise HomeAssistantError(f"Failed to get holiday mode: {err}") from err
+
+    def holiday_action_datetime(value: str | None) -> str | None:
+        """Convert HA date/time selector or ISO-8601 input to UTC ISO-8601.
+
+        The HA date/time selector emits a timezone-naive local timestamp with
+        a space separator. Explicit timezone-aware ISO-8601 inputs retain their
+        instant. Never interpret a naive local value as UTC.
+        """
+        if value is None:
+            return None
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except (ValueError, TypeError) as err:
+            raise HomeAssistantError(
+                f"Invalid holiday date/time {value!r}; use the date/time selector "
+                "or an ISO-8601 timestamp"
+            ) from err
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=dt_util.DEFAULT_TIME_ZONE)
+        utc_value = parsed.astimezone(timezone.utc)
+        if utc_value.minute not in (0, 30) or utc_value.second or utc_value.microsecond:
+            raise HomeAssistantError(
+                "Tado requires holiday start and end times on full half-hour "
+                "boundaries (:00 or :30). Please adjust the selected time."
+            )
+        return utc_value.isoformat().replace("+00:00", "Z")
 
     async def async_set_holiday_mode(call: ServiceCall) -> None:
         """Enable/disable holiday mode and optionally set its date range."""
@@ -851,9 +887,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         try:
             await service_coordinator.api.set_holiday_mode(
                 enabled=call.data[ATTR_ENABLED],
-                start_date=call.data.get(ATTR_START_DATE),
-                end_date=call.data.get(ATTR_END_DATE),
+                start_date=holiday_action_datetime(call.data.get(ATTR_START_DATE)),
+                end_date=holiday_action_datetime(call.data.get(ATTR_END_DATE)),
             )
+            await service_coordinator.holiday_mode_manager.refresh()
             await service_coordinator.async_request_refresh()
             _LOGGER.info("Holiday mode set to %s", call.data[ATTR_ENABLED])
         except TadoXApiError as err:
@@ -952,6 +989,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         coordinator = hass.data[DOMAIN].pop(entry.entry_id)
+        if hasattr(coordinator, "holiday_mode_manager"):
+            coordinator.holiday_mode_manager.stop()
         if hasattr(coordinator, "schedule_profile_manager"):
             coordinator.schedule_profile_manager.stop()
 

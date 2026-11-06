@@ -8,6 +8,32 @@ The project is independently maintained and is derived from the original Tado X 
 
 **[Readme](README.md)** · [Report an issue](https://github.com/rleatherb/ha-tado-x-enhanced/issues) · [Releases](https://github.com/rleatherb/ha-tado-x-enhanced/releases)
 
+## [1.1.0](https://github.com/rleatherb/ha-tado-x-enhanced/releases/tag/v1.1.0) - 2026-11-06
+
+### Added
+
+- Home-scoped Holiday Mode controls: switch, status, start/end sensors, local-date display, and manual refresh button.
+- Independent holiday status refresh at the configured schedule polling interval and holiday start/end boundaries.
+- Support for scheduling a new seven-day holiday when enabling an expired holiday period through Home Assistant; explicitly supplied dates are respected.
+
+### Changed
+
+- Holiday Mode enable/disable operations without date changes use a minimal `enabled` request; date updates preserve the existing holiday settings.
+- Domestic hot-water state mapping recognises `HOLIDAY_MODE_OFF` and `HOLIDAY_MODE_ON` while preserving existing Schedule, Off, Boost, and Away handling.
+- Removed temporary Holiday Mode and hot-water investigation diagnostics without adding extra polling or automatic hot-water writes.
+
+### Fixed
+
+- Updated climate entity interfaces for Home Assistant 2026.11 (`native_current_temperature`, `native_target_temperature`, and `_attr_native_temperature_unit`) to eliminate deprecation warnings without changing entity identities or temperature control behaviour.
+
+### Known limitation
+
+- Tado may leave domestic hot water `OFF` rather than restoring Schedule when Holiday Mode is cancelled, even if cancellation is performed entirely in the Tado app. The integration reports the state returned by Tado and does not automatically restore Schedule. Users may restore Schedule manually or use their own Home Assistant automation.
+
+### Validation
+
+- RC1 functionality was tested by the maintainer in Home Assistant across both configured homes, including schedules, profiles, climate timers, hot water, Holiday Mode, historical data, API monitoring, and climate compatibility. The version-only release package requires final installation verification.
+
 ## [1.0.0](https://github.com/rleatherb/ha-tado-x-enhanced/releases/tag/v1.0.0) - Initial Release
 
 This integration is a development of the original [Tado X integration by exabird](https://github.com/exabird/ha-tado-x) (version 1.8.11). Changes from this are as below:
@@ -83,7 +109,10 @@ This integration is a development of the original [Tado X integration by exabird
 - A HACS migration from Exabird's original integration to Enhanced was successfully tested in October 2026 on a two-home Home Assistant installation: 105 existing devices were retained, checked entity IDs were preserved, and the integration loaded without reported startup errors or warnings. The documented handover avoids deleting existing Home Assistant configuration entries. This is not a guarantee for every earlier version.
 
 - The Home Assistant integration domain remains `tado_x`. This project **replaces** other installations using the same domain; it cannot run alongside the original integration in one Home Assistant instance.
+
 - Back up Home Assistant before replacing an existing installation. Verify both home entries, entities, and stored schedule profiles after migration.
+
 - Some functionality depends on the connected Tado devices, the account's subscription, and API responses. Cloud API quotas apply.
+
 - API reset-time detection is observational rather than an exact server-announced reset timestamp. Estimated daily usage may exceed 100% and may initially be unavailable.
 

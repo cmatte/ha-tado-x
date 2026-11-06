@@ -4,7 +4,7 @@ An independently maintained custom integration for controlling and monitoring **
 
 Tado X Enhanced builds on the original [Tado X integration by exabird](https://github.com/exabird/ha-tado-x), adding multi-home support, Home and Away schedule management, reusable schedule profiles, domestic hot-water controls, richer room diagnostics and API quota forecasting.
 
-> **Project status:** Initial independent version `1.0.0` is published as the official [GitHub v1.0.0 release](https://github.com/rleatherb/ha-tado-x-enhanced/releases/tag/v1.0.0). Some features depend on your Tado hardware, subscription and API responses. This is a cloud-based integration and is subject to Tado API limits.
+> **Project status:** Current release version: `1.1.0` (prepared for publication). See [GitHub Releases](https://github.com/rleatherb/ha-tado-x-enhanced/releases) for the latest published version. Some features depend on your Tado hardware, subscription and API responses. This is a cloud-based integration and is subject to Tado API limits.
 
 **[Changelog](CHANGELOG.md)** · [Report an issue](https://github.com/rleatherb/ha-tado-x-enhanced/issues) · [Releases](https://github.com/rleatherb/ha-tado-x-enhanced/releases)
 
@@ -24,7 +24,7 @@ Tado X Enhanced builds on the original [Tado X integration by exabird](https://g
 
 ## Installation through HACS
 
-This repository is public and can be added to HACS as a custom repository. The official [v1.0.0 release](https://github.com/rleatherb/ha-tado-x-enhanced/releases/tag/v1.0.0) is available on GitHub:
+This repository is public and can be added to HACS as a custom repository. See [GitHub Releases](https://github.com/rleatherb/ha-tado-x-enhanced/releases) for the latest published version:
 
 1. Install [HACS](https://www.hacs.xyz/) if it is not already installed.
 2. In Home Assistant, open **HACS → Custom repositories**.
@@ -151,7 +151,7 @@ These calculations do not require additional API calls. They are estimates, not 
 - Tado's API is not controlled by this project and may change or impose request limits.
 - Multiple homes are supported, but verify service targeting and quota reporting when configuring more than one home.
 - The minimum supported Home Assistant release has **not yet been established by testing**. Do not infer compatibility solely from the manifest version.
-- Version `1.0.0` has been validated on a separate Home Assistant test installation, including a HACS handover from the original Exabird integration; compatibility with every earlier version and Home Assistant release has not been established.
+- The original `1.0.0` release was validated on a separate Home Assistant test installation, including a HACS handover from the original Exabird integration. Version `1.1.0` has passed regression testing, including Home Assistant 2026.11 climate compatibility checks. Compatibility with every earlier installation and Home Assistant release has not been established.
 
 ## Releases and changes
 
@@ -174,3 +174,13 @@ The MIT licence permits use, modification and redistribution subject to retentio
 
 Project maintenance and GitHub code ownership: [@rleatherb](https://github.com/rleatherb).
 
+
+
+### Holiday Mode
+The Tado X Home device has Holiday Mode, Holiday Status, Holiday Start, Holiday End and Refresh Holiday Mode entities. An expired holiday switched on through Home Assistant is rescheduled to start immediately for seven days. Explicit dates in `tado_x.set_holiday_mode` remain unchanged. Holiday state refreshes independently at the configured schedule polling interval and at holiday boundaries.
+
+### Holiday date display and hot-water states
+
+The Home device now also provides **Holiday Start (Local)** and **Holiday End (Local)**, displaying absolute local dates and times. The original timestamp entities remain unchanged for automations. During active holidays, `HOLIDAY_MODE_OFF` is recognised as a hot-water state and shown as Off by the Hot Water Mode selector. Holiday changes refresh hot-water state promptly.
+
+**Known Tado behaviour:** After cancelling Holiday Mode, Tado may leave domestic hot water Off instead of restoring Schedule, including when the holiday was controlled entirely in the Tado app. Tado X Enhanced reports the API state and does not automatically restore Schedule. If necessary, restore Schedule manually.

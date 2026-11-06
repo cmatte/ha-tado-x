@@ -986,22 +986,24 @@ class TadoXApi:
     ) -> None:
         """Enable/disable holiday mode and optionally set its date range.
 
-        Read-modify-write so existing room/hot-water settings are preserved.
-        start_date/end_date are ISO-8601 strings.
+        Toggle-only PATCH sends only enabled; explicit date changes preserve
+        existing room and hot-water settings. Dates are ISO-8601.
         """
         if not self._home_id:
             raise TadoXApiError("Home ID not set")
 
-        try:
-            current = await self.get_holiday_mode()
-        except TadoXApiError:
-            current = {}
+        # Do not PATCH an empty configuration if the initial GET fails:
+        # the request must preserve per-room and hot-water holiday settings.
+        current = await self.get_holiday_mode()
+        if not isinstance(current.get("roomSettings"), dict):
+            raise TadoXApiError("Holiday settings incomplete; refusing unsafe update")
 
-        body = dict(current)
-        body["enabled"] = enabled
-        if start_date:
+        # Toggle-only updates must not resubmit unrelated holiday settings.
+        toggle_only = start_date is None and end_date is None
+        body = {"enabled": enabled} if toggle_only else dict(current)
+        if start_date is not None:
             body["startDate"] = start_date
-        if end_date:
+        if end_date is not None:
             body["endDate"] = end_date
 
         await self._request(
@@ -1151,7 +1153,7 @@ class TadoXApi:
             f"{TADO_HOPS_API_URL}/homes/{self._home_id}/programmer/domesticHotWater/boost",
             json_data={ "boost": "OFF" },
         )
-        
+
     async def resume_domestic_hot_water_schedule(self) -> None:
         """Resume the schedule for domestic hot water."""
         if not self._home_id:

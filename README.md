@@ -1,6 +1,6 @@
 # Tado X Enhanced for Home Assistant
 
-> **This is cmatte/ha-tado-x, a fork tracking [Tado X Enhanced](https://github.com/rleatherb/ha-tado-x-enhanced) v1.1.1** plus two fixes proposed upstream: serialised token refreshes (no more `Failed to refresh token: 400` when several calls run at once) and Home Assistant's SSL context for device login. Once they are merged upstream, use Tado X Enhanced directly.
+> **This is cmatte/ha-tado-x, a fork tracking [Tado X Enhanced](https://github.com/rleatherb/ha-tado-x-enhanced) v1.1.1** plus three fixes proposed upstream (rleatherb/ha-tado-x-enhanced#5, #6, #7): serialised token refreshes (no more `Failed to refresh token: 400` when several calls run at once), Home Assistant's SSL context for device login, and no forced re-authentication on network errors during token refresh. Once they are merged upstream, use Tado X Enhanced directly.
 
 
 An independently maintained custom integration for controlling and monitoring **Tado X** systems in [Home Assistant](https://www.home-assistant.io/).

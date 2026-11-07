@@ -11,7 +11,13 @@ from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import TadoXApi, TadoXApiError, TadoXAuthError, TadoXRateLimitError
-from .const import DOMAIN, SCAN_INTERVAL_AUTO_ASSIST, SCAN_INTERVAL_FREE_TIER
+from .const import (
+    DEFAULT_TIMER_DURATION_MINUTES,
+    DOMAIN,
+    SCAN_INTERVAL_AUTO_ASSIST,
+    SCAN_INTERVAL_FREE_TIER,
+    TERMINATION_TIMER,
+)
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -53,11 +59,21 @@ class TadoXRoom:
     manual_control_type: str | None = None
     boost_mode: bool = False
     open_window_detected: bool = False
+    open_window_ends_at: str | None = None
     next_schedule_change: str | None = None
     next_schedule_temperature: float | None = None
+    next_schedule_power: str | None = None
     devices: list[TadoXDevice] = field(default_factory=list)
     # Running times data (heating duration today)
     running_time_today_seconds: int = 0
+
+
+@dataclass
+class TadoXRoomControlDefaults:
+    """Default control settings for a room."""
+
+    termination_type: str = TERMINATION_TIMER
+    duration_minutes: int = DEFAULT_TIMER_DURATION_MINUTES
 
 
 @dataclass
@@ -103,6 +119,8 @@ class TadoXData:
     presence_locked: bool = False  # Whether presence is manually set
     api_calls_today: int = 0
     api_reset_time: datetime | None = None
+    api_last_reset: datetime | None = None
+    api_last_observed_at: datetime | None = None
     has_auto_assist: bool = False
     # Real values from Tado API response headers
     api_quota_limit: int | None = None  # From ratelimit-policy header (q=)
@@ -125,6 +143,10 @@ class TadoXData:
     flow_temp_auto_adaptation: bool = False
     flow_temp_auto_value: int | None = None
     has_flow_temp_control: bool = False
+    # Domestic hot water state (e.g., OFF, SCHEDULE_ON, SCHEDULE_OFF, BOOST)
+    dhw_state: str | None = None
+    dhw_boost_ends: str | None = None
+    dhw_next_schedule_change: str | None = None
 
 
 class TadoXDataUpdateCoordinator(DataUpdateCoordinator[TadoXData]):
@@ -143,6 +165,7 @@ class TadoXDataUpdateCoordinator(DataUpdateCoordinator[TadoXData]):
         enable_air_comfort: bool = True,
         enable_running_times: bool = True,
         enable_flow_temp: bool = True,
+        enable_hot_water: bool = True,
     ) -> None:
         """Initialize the coordinator."""
         # Determine scan interval based on subscription tier if not explicitly set
@@ -159,11 +182,14 @@ class TadoXDataUpdateCoordinator(DataUpdateCoordinator[TadoXData]):
             update_interval=timedelta(seconds=scan_interval),
         )
         self.api = api
+        self.api._get_room_control_defaults = self.get_room_control_defaults
+        self.parent_device_ids: dict[tuple[str, str], str] = {}
         self.home_id = home_id
         self.home_name = home_name
         self.api.home_id = home_id
         self._save_api_stats_callback = save_api_stats_callback
         self._scan_interval = scan_interval
+        self.room_control_defaults: dict[int, TadoXRoomControlDefaults] = {}
 
         # Feature toggles for optional API calls
         self.enable_weather = enable_weather
@@ -171,6 +197,7 @@ class TadoXDataUpdateCoordinator(DataUpdateCoordinator[TadoXData]):
         self.enable_air_comfort = enable_air_comfort
         self.enable_running_times = enable_running_times
         self.enable_flow_temp = enable_flow_temp
+        self.enable_hot_water = enable_hot_water
 
         _LOGGER.info(
             "Tado X coordinator initialized with %d second update interval (%s tier)",
@@ -178,8 +205,8 @@ class TadoXDataUpdateCoordinator(DataUpdateCoordinator[TadoXData]):
             "Auto-Assist" if api.has_auto_assist else "Free"
         )
         _LOGGER.info(
-            "Optional features - Weather: %s, Mobile devices: %s, Air comfort: %s, Running times: %s, Flow temp: %s",
-            enable_weather, enable_mobile_devices, enable_air_comfort, enable_running_times, enable_flow_temp
+            "Optional features - Weather: %s, Mobile devices: %s, Air comfort: %s, Running times: %s, Flow temp: %s, Hot water: %s",
+            enable_weather, enable_mobile_devices, enable_air_comfort, enable_running_times, enable_flow_temp, enable_hot_water
         )
 
     def update_scan_interval(self, new_interval: int) -> None:
@@ -200,7 +227,32 @@ class TadoXDataUpdateCoordinator(DataUpdateCoordinator[TadoXData]):
             calls += 1
         if self.enable_running_times:
             calls += 1
+        if self.enable_hot_water:
+            calls += 1
         return calls
+
+    def get_room_control_defaults(self, room_id: int) -> TadoXRoomControlDefaults:
+        """Return per-room control defaults, creating them if missing."""
+        defaults = self.room_control_defaults.get(room_id)
+        if defaults is None:
+            defaults = TadoXRoomControlDefaults()
+            self.room_control_defaults[room_id] = defaults
+        return defaults
+
+    def set_room_control_defaults(
+        self,
+        room_id: int,
+        *,
+        termination_type: str | None = None,
+        duration_minutes: int | None = None,
+    ) -> None:
+        """Update per-room control defaults."""
+        defaults = self.get_room_control_defaults(room_id)
+
+        if termination_type is not None:
+            defaults.termination_type = termination_type
+        if duration_minutes is not None:
+            defaults.duration_minutes = duration_minutes
 
     async def _async_update_data(self) -> TadoXData:
         """Fetch data from Tado X API."""
@@ -211,11 +263,22 @@ class TadoXDataUpdateCoordinator(DataUpdateCoordinator[TadoXData]):
             # Get rooms with devices (required)
             rooms_devices_data = await self.api.get_rooms_and_devices()
 
-            # Get home presence state (required)
             home_state = await self.api.get_home_state()
             presence = home_state.get("presence")
             presence_locked = home_state.get("presenceLocked", False)
 
+            # Get domestic hot water state (optional)
+            dhw_state = None
+            dhw_boost_ends = None
+            dhw_next_schedule_change = None
+            if self.enable_hot_water:
+                dhw_state_response = await self.api.get_domestic_hot_water_state()
+                dhw_state = dhw_state_response.get("state")
+                if dhw_state == "BOOST":
+                    dhw_boost_ends = dhw_state_response.get("nextStateChange")
+                elif dhw_state in ("SCHEDULE_ON", "SCHEDULE_OFF"):
+                    dhw_next_schedule_change = dhw_state_response.get("nextStateChange")
+            
             # Get weather data (optional)
             weather = None
             if self.enable_weather:
@@ -242,17 +305,42 @@ class TadoXDataUpdateCoordinator(DataUpdateCoordinator[TadoXData]):
                 presence=presence,
                 presence_locked=presence_locked,
                 weather=weather,
+                dhw_state=dhw_state,
+                dhw_boost_ends=dhw_boost_ends,
+                dhw_next_schedule_change=dhw_next_schedule_change,
             )
 
-            # Process rooms and devices
+            # Process rooms, devices and Tado manual-control defaults
             rooms_info = rooms_devices_data.get("rooms", [])
             room_devices_map: dict[int, list[dict]] = {}
 
             for room_info in rooms_info:
                 room_id = room_info.get("roomId")
-                if room_id:
-                    room_devices_map[room_id] = room_info.get("devices", [])
+                if not room_id:
+                    continue
 
+                room_devices_map[room_id] = room_info.get("devices", [])
+
+                # Read the Manual Control defaults configured in the Tado app.
+                manual_control_default = (
+                    room_info.get("deviceManualControlTermination") or {}
+                )
+
+                termination_type = manual_control_default.get("type")
+                duration_seconds = manual_control_default.get("durationInSeconds")
+
+                if termination_type is not None:
+                    self.set_room_control_defaults(
+                        room_id,
+                        termination_type=termination_type,
+                    )
+
+                if duration_seconds is not None:
+                    self.set_room_control_defaults(
+                        room_id,
+                        duration_minutes=int(duration_seconds / 60),
+                    )
+ 
             # Process room states
             for room_data in rooms_data:
                 room_id = room_data.get("id")
@@ -293,6 +381,7 @@ class TadoXDataUpdateCoordinator(DataUpdateCoordinator[TadoXData]):
                 next_change_setting = next_change.get("setting") or {}
                 next_change_temp_obj = next_change_setting.get("temperature") or {}
                 next_change_temp = next_change_temp_obj.get("value")
+                next_change_power = next_change_setting.get("power")
 
                 # Get heating power and connection (use 'or {}' to handle None values)
                 heating_power_data = room_data.get("heatingPower") or {}
@@ -312,8 +401,10 @@ class TadoXDataUpdateCoordinator(DataUpdateCoordinator[TadoXData]):
                     manual_control_type=manual_type,
                     boost_mode=room_data.get("boostMode") is not None,
                     open_window_detected=room_data.get("openWindow") is not None,
+                    open_window_ends_at=(room_data.get("openWindow") or {}).get("projectedExpiry"),
                     next_schedule_change=next_change_time,
                     next_schedule_temperature=next_change_temp,
+                    next_schedule_power=next_change_power,
                 )
 
                 # Add devices for this room
@@ -492,6 +583,8 @@ class TadoXDataUpdateCoordinator(DataUpdateCoordinator[TadoXData]):
             # Populate API stats (prefer real values from headers when available)
             data.api_calls_today = self.api.api_calls_today
             data.api_reset_time = self.api.api_reset_time
+            data.api_last_reset = self.api.api_last_reset
+            data.api_last_observed_at = self.api.api_last_observed_at
             data.has_auto_assist = self.api.has_auto_assist
             data.api_quota_limit = self.api.api_quota_limit
             data.api_quota_remaining = self.api.api_quota_remaining

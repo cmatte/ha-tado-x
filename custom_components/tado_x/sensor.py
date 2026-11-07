@@ -4,14 +4,17 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
     SensorEntityDescription,
     SensorStateClass,
 )
+from homeassistant.util import dt as dt_util
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import PERCENTAGE, UnitOfTemperature, UnitOfTime
 from homeassistant.core import HomeAssistant, callback
@@ -19,8 +22,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .device_helpers import via_device_kwargs
-from .const import API_QUOTA_FREE_TIER, API_QUOTA_PREMIUM, DOMAIN
+from .const import DEVICE_TYPE_NAMES, API_QUOTA_FREE_TIER, API_QUOTA_PREMIUM, DOMAIN, FEATURE_ENTITY_MAP
 from .coordinator import (
     TadoXData,
     TadoXDataUpdateCoordinator,
@@ -128,6 +130,30 @@ ROOM_SENSORS: tuple[TadoXRoomSensorEntityDescription, ...] = (
         icon="mdi:clock-time-four",
         value_fn=_format_running_time_hours,
     ),
+    TadoXRoomSensorEntityDescription(
+        key="next_schedule_change",
+        name="Next Schedule Change",
+        translation_key="next_schedule_change",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        icon="mdi:calendar-clock",
+        value_fn=lambda room: dt_util.parse_datetime(room.next_schedule_change) if room.next_schedule_change else None,
+    ),
+    TadoXRoomSensorEntityDescription(
+        key="next_schedule_temperature",
+        name="Next Schedule Temperature",
+        translation_key="next_schedule_temperature",
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        device_class=SensorDeviceClass.TEMPERATURE,
+        icon="mdi:thermometer-chevron-up",
+        value_fn=lambda room: room.next_schedule_temperature,
+    ),
+    TadoXRoomSensorEntityDescription(
+        key="next_schedule_power",
+        name="Next Schedule Power",
+        translation_key="next_schedule_power",
+        icon="mdi:power",
+        value_fn=lambda room: room.next_schedule_power,
+    ),
 )
 
 DEVICE_SENSORS: tuple[TadoXDeviceSensorEntityDescription, ...] = (
@@ -175,7 +201,29 @@ def _get_api_usage_percentage(data: TadoXData) -> float:
         # Fall back to internal counter
         calls_used = data.api_calls_today
 
-    return min(100, round((calls_used / quota) * 100, 1))
+    return round((calls_used / quota) * 100, 1)
+
+
+def _get_api_estimated_daily_usage(data: TadoXData) -> float | None:
+    """Project the daily quota usage using the observed reset boundary.
+
+    Do not infer a reset from a fixed clock or from an unknown initial
+    baseline. Avoid extrapolation during the first hour after rollover.
+    """
+    if data.api_last_reset is None or data.api_reset_time is None:
+        return None
+    now = dt_util.utcnow()
+    elapsed = (now - data.api_last_reset).total_seconds()
+    remaining = (data.api_reset_time - now).total_seconds()
+    if elapsed < 3600 or remaining <= 0 or elapsed >= 86400:
+        return None
+    if data.api_quota_limit is None or data.api_quota_remaining is None:
+        return None
+    quota = data.api_quota_limit
+    if quota <= 0:
+        return None
+    used = max(0, quota - data.api_quota_remaining)
+    return round(used * 86400 / elapsed / quota * 100, 1)
 
 
 def _get_api_calls_today(data: TadoXData) -> int:
@@ -205,8 +253,36 @@ def _get_presence_mode(data: TadoXData) -> str:
         return "MANUAL"
     return "AUTO"
 
+def _get_domestic_hot_water_state(data: TadoXData) -> str:
+    """Get the state of DHW (OFF, SCHEDULE_OFF, SCHEDULE_ON, BOOST)."""
+    return data.dhw_state;
+
+
+def _get_dhw_boost_ends(data: TadoXData) -> datetime | None:
+    """Return the boost end time as a timezone-aware datetime."""
+    if data.dhw_state != "BOOST" or not data.dhw_boost_ends:
+        return None
+    return dt_util.parse_datetime(data.dhw_boost_ends)
+
+
+def _get_dhw_next_schedule_change(data: TadoXData) -> datetime | None:
+    """Return the next schedule transition while following the schedule."""
+    if data.dhw_state not in ("SCHEDULE_ON", "SCHEDULE_OFF"):
+        return None
+    if not data.dhw_next_schedule_change:
+        return None
+    return dt_util.parse_datetime(data.dhw_next_schedule_change)
+
 
 HOME_SENSORS: tuple[TadoXHomeSensorEntityDescription, ...] = (
+    TadoXHomeSensorEntityDescription(
+        key="home_id",
+        name="Tado Home ID",
+        translation_key="home_id",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        icon="mdi:home-account",
+        value_fn=lambda data: str(data.home_id),
+    ),
     TadoXHomeSensorEntityDescription(
         key="api_calls_today",
         translation_key="api_calls_today",
@@ -237,6 +313,14 @@ HOME_SENSORS: tuple[TadoXHomeSensorEntityDescription, ...] = (
         value_fn=_get_api_usage_percentage,
     ),
     TadoXHomeSensorEntityDescription(
+        key="api_estimated_daily_usage",
+        translation_key="api_estimated_daily_usage",
+        icon="mdi:chart-timeline-variant",
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=_get_api_estimated_daily_usage,
+    ),
+    TadoXHomeSensorEntityDescription(
         key="api_reset_time",
         translation_key="api_reset_time",
         icon="mdi:clock-outline",
@@ -250,6 +334,15 @@ HOME_SENSORS: tuple[TadoXHomeSensorEntityDescription, ...] = (
         device_class=SensorDeviceClass.ENUM,
         options=["OK", "RATE_LIMITED"],
         value_fn=_get_api_status,
+    ),
+    TadoXHomeSensorEntityDescription(
+        key="dhw_state",
+        name="Hot Water State",
+        translation_key="dhw_state",
+        icon="mdi:water-boiler",
+        device_class=SensorDeviceClass.ENUM,
+        options=["OFF", "SCHEDULE_OFF", "SCHEDULE_ON", "BOOST", "AWAY_OFF", "AWAY_ON", "HOLIDAY_MODE_OFF", "HOLIDAY_MODE_ON"],
+        value_fn=_get_domestic_hot_water_state,
     ),
     TadoXHomeSensorEntityDescription(
         key="presence_state",
@@ -266,6 +359,20 @@ HOME_SENSORS: tuple[TadoXHomeSensorEntityDescription, ...] = (
         device_class=SensorDeviceClass.ENUM,
         options=["AUTO", "MANUAL"],
         value_fn=_get_presence_mode,
+    ),
+    TadoXHomeSensorEntityDescription(
+        key="dhw_boost_ends",
+        name="Hot water boost ends",
+        icon="mdi:timer-outline",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        value_fn=_get_dhw_boost_ends,
+    ),
+    TadoXHomeSensorEntityDescription(
+        key="dhw_next_schedule_change",
+        name="Hot water next schedule change",
+        icon="mdi:calendar-clock",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        value_fn=_get_dhw_next_schedule_change,
     ),
 )
 
@@ -326,6 +433,9 @@ async def async_setup_entry(
 
     entities: list[SensorEntity] = []
 
+    for kind in ("status", "start", "end"):
+        entities.append(TadoXHolidaySensor(coordinator, kind))
+
     # Add home-level sensors (API monitoring)
     for description in HOME_SENSORS:
         entities.append(TadoXHomeSensor(coordinator, description))
@@ -362,6 +472,55 @@ async def async_setup_entry(
                 entities.append(TadoXAirComfortSensor(coordinator, room_id, description))
 
     async_add_entities(entities)
+
+    # Set initial disabled_by state based on feature flags
+    from homeassistant.helpers import entity_registry as er
+    entity_registry = er.async_get(hass)
+    
+    # Disable entities based on feature flags
+    for entity_id, entity_entry in list(entity_registry.entities.items()):
+        # Only process Tado X sensor entities
+        if entity_entry.platform != DOMAIN or entity_entry.domain != "sensor":
+            continue
+        
+        if entity_entry.config_entry_id != entry.entry_id:
+            continue
+
+        # Preserve an explicit user decision to disable an entity.
+        if entity_entry.disabled_by not in (None, er.RegistryEntryDisabler.INTEGRATION):
+            continue
+
+        if not entity_entry.unique_id:
+            continue
+        
+        # Check if this entity matches a disabled feature
+        should_be_disabled = False
+        for feature_flag, entity_keys in FEATURE_ENTITY_MAP.items():
+            feature_enabled = getattr(coordinator, feature_flag, False)
+            
+            # Check if entity_key matches any of the disabled feature's keys
+            for entity_key in entity_keys:
+                if entity_entry.unique_id.endswith(f"_{entity_key}"):
+                    if not feature_enabled:
+                        should_be_disabled = True
+                    break
+            
+            if should_be_disabled:
+                break
+        
+        # Update disabled state
+        if should_be_disabled:
+            entity_registry.async_update_entity(
+                entity_id,
+                disabled_by=er.RegistryEntryDisabler.INTEGRATION,
+            )
+        else:
+            # Make sure it's enabled if the feature is on
+            if entity_entry.disabled_by == er.RegistryEntryDisabler.INTEGRATION:
+                entity_registry.async_update_entity(
+                    entity_id,
+                    disabled_by=None,
+                )
 
 
 class TadoXHomeSensor(CoordinatorEntity[TadoXDataUpdateCoordinator], SensorEntity):
@@ -473,7 +632,7 @@ class TadoXRoomSensor(CoordinatorEntity[TadoXDataUpdateCoordinator], SensorEntit
             name=room_name,
             manufacturer="Tado",
             model="Tado X Room",
-            **via_device_kwargs(self, (DOMAIN, str(self.coordinator.home_id))),
+            via_device_id=self.coordinator.parent_device_ids[(DOMAIN, str(self.coordinator.home_id))],
         )
 
     @property
@@ -522,33 +681,16 @@ class TadoXDeviceSensor(CoordinatorEntity[TadoXDataUpdateCoordinator], SensorEnt
                 identifiers={(DOMAIN, self._serial_number)},
             )
 
-        # French names for device types (used in device name)
-        device_type_names_fr = {
-            "VA04": "Vanne",
-            "SU04": "Capteur Temp",
-            "TR04": "Récepteur",  # Wireless Receiver X
-            "RU04": "Thermostat",  # Wired Smart Thermostat X
-            "IB02": "Bridge X",
-        }
-
-        # English model names (used in device model field)
-        device_type_models = {
-            "VA04": "Radiator Valve X",
-            "SU04": "Temperature Sensor X",
-            "TR04": "Wireless Receiver X",
-            "RU04": "Wired Smart Thermostat X",
-            "IB02": "Bridge X",
-        }
 
         # Determine via_device - link to room if device has one, otherwise to home
-        via_identifier = (
+        via_device_identifier = (
             (DOMAIN, f"{self.coordinator.home_id}_{device.room_id}")
             if device.room_id
             else (DOMAIN, str(self.coordinator.home_id))
         )
 
         # Generate device name with room name and numbering
-        base_name = device_type_names_fr.get(device.device_type, device.device_type)
+        base_name = DEVICE_TYPE_NAMES.get(device.device_type, device.device_type)
 
         if device.room_id and device.room_name:
             # Count devices of same type in same room to determine numbering
@@ -572,9 +714,10 @@ class TadoXDeviceSensor(CoordinatorEntity[TadoXDataUpdateCoordinator], SensorEnt
             identifiers={(DOMAIN, self._serial_number)},
             name=device_name,
             manufacturer="Tado",
-            model=device_type_models.get(device.device_type, device.device_type),
+            model=DEVICE_TYPE_NAMES.get(device.device_type, device.device_type),
+            serial_number=device.serial_number,
             sw_version=device.firmware_version,
-            **via_device_kwargs(self, via_identifier),
+            via_device_id=self.coordinator.parent_device_ids[via_device_identifier],
         )
 
     @property
@@ -630,7 +773,7 @@ class TadoXAirComfortSensor(CoordinatorEntity[TadoXDataUpdateCoordinator], Senso
             name=room_name,
             manufacturer="Tado",
             model="Tado X Room",
-            **via_device_kwargs(self, (DOMAIN, str(self.coordinator.home_id))),
+            via_device_id=self.coordinator.parent_device_ids[(DOMAIN, str(self.coordinator.home_id))],
         )
 
     @property
@@ -645,3 +788,55 @@ class TadoXAirComfortSensor(CoordinatorEntity[TadoXDataUpdateCoordinator], Senso
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
         self.async_write_ha_state()
+
+
+class TadoXHolidaySensor(CoordinatorEntity[TadoXDataUpdateCoordinator], SensorEntity):
+    """Home-level holiday state and dates."""
+
+    _attr_has_entity_name = True
+
+    def __init__(self, coordinator, kind: str):
+        super().__init__(coordinator)
+        self._kind = kind
+        self._attr_unique_id = f"{coordinator.home_id}_holiday_{kind}"
+        self._attr_translation_key = f"holiday_{kind}"
+        self._attr_name = {"status": "Holiday Status", "start": "Holiday Start", "end": "Holiday End"}[kind]
+        self._attr_icon = "mdi:beach" if kind == "status" else "mdi:calendar-clock"
+        if kind == "status":
+            self._attr_device_class = SensorDeviceClass.ENUM
+            self._attr_options = ["off", "scheduled", "active", "ended"]
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(identifiers={(DOMAIN, str(self.coordinator.home_id))})
+
+    @property
+    def available(self) -> bool:
+        return self.coordinator.holiday_mode_manager.data is not None
+
+    @property
+    def native_value(self):
+        manager = self.coordinator.holiday_mode_manager
+        if self._kind == "status":
+            return manager.status
+        from .holiday_mode import parse_time
+        if not manager.data:
+            return None
+        value = parse_time(manager.data.get("startDate" if self._kind.startswith("start") else "endDate"))
+        return dt_util.as_local(value).strftime("%d %b %Y, %H:%M") if value else None
+
+    @property
+    def extra_state_attributes(self):
+        if self._kind in ("start", "end"):
+            from .holiday_mode import parse_time
+            data = self.coordinator.holiday_mode_manager.data or {}
+            raw = data.get("startDate" if self._kind == "start" else "endDate")
+            value = parse_time(raw)
+            return {"utc_datetime": value.isoformat() if value else None} if value else None
+        if self._kind != "status":
+            return None
+        data = self.coordinator.holiday_mode_manager.data
+        if not data:
+            return None
+        return {"enabled": data.get("enabled"), "active": data.get("active"),
+                "room_settings": data.get("roomSettings"), "hot_water_settings": data.get("hotWaterSettings")}

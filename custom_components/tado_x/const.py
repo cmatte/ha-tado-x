@@ -37,6 +37,10 @@ API_CALLS_PER_UPDATE: Final = 6  # get_rooms + get_rooms_and_devices + get_home_
 
 # Config keys for options
 CONF_SCAN_INTERVAL: Final = "scan_interval"
+CONF_ENABLE_SCHEDULE_POLLING: Final = "enable_schedule_polling"
+CONF_SCHEDULE_POLL_INTERVAL: Final = "schedule_poll_interval"
+DEFAULT_SCHEDULE_POLL_INTERVAL: Final = 3600  # seconds
+MIN_SCHEDULE_POLL_INTERVAL: Final = 900  # seconds
 
 # Feature toggles for optional API calls
 CONF_ENABLE_WEATHER: Final = "enable_weather"
@@ -44,6 +48,7 @@ CONF_ENABLE_MOBILE_DEVICES: Final = "enable_mobile_devices"
 CONF_ENABLE_AIR_COMFORT: Final = "enable_air_comfort"
 CONF_ENABLE_RUNNING_TIMES: Final = "enable_running_times"
 CONF_ENABLE_FLOW_TEMP: Final = "enable_flow_temp"
+CONF_ENABLE_HOT_WATER: Final = "enable_hot_water"
 
 # Base API calls (required): get_rooms, get_rooms_and_devices, get_home_state
 API_CALLS_BASE: Final = 3
@@ -55,13 +60,22 @@ DEVICE_TYPE_THERMOSTAT: Final = "RU04"  # Tado X Wired Smart Thermostat
 DEVICE_TYPE_BRIDGE: Final = "IB02"  # Tado X Bridge
 DEVICE_TYPE_SENSOR: Final = "SU04"  # Tado X Temperature Sensor
 
+# Default English device names used for both device name and model.
+DEVICE_TYPE_NAMES: Final = {
+    "VA04": "Radiator Valve X",
+    "SU04": "Temperature Sensor X",
+    "TR04": "Wireless Receiver X",
+    "RU04": "Wired Smart Thermostat X",
+    "IB02": "Bridge X",
+}
+
 # Termination types
 TERMINATION_MANUAL: Final = "MANUAL"
 TERMINATION_TIMER: Final = "TIMER"
 TERMINATION_NEXT_TIME_BLOCK: Final = "NEXT_TIME_BLOCK"
 
 # Default timer duration (30 minutes)
-DEFAULT_TIMER_DURATION: Final = 1800
+DEFAULT_TIMER_DURATION_MINUTES: Final = 30
 
 # Temperature limits
 MIN_TEMP: Final = 5.0
@@ -78,3 +92,12 @@ CONNECTION_STATE_DISCONNECTED: Final = "DISCONNECTED"
 
 # Platforms
 PLATFORMS: Final = ["climate", "sensor", "binary_sensor", "switch", "button", "device_tracker", "select", "number"]
+
+# Feature to entity key mapping for sensor/button platforms
+# This maps feature flags to the corresponding entity keys that should be enabled/disabled based on the flag
+FEATURE_ENTITY_MAP: Final = {
+    "enable_hot_water": ["dhw_state", "dhw_boost_ends", "dhw_next_schedule_change", "dhw_mode", "boost_hot_water", "disable_hot_water", "resume_hot_water_schedule"],
+    "enable_weather": ["outdoor_temperature", "solar_intensity", "weather_state"],
+    "enable_running_times": ["heating_time_today"],
+    "enable_air_comfort": ["air_freshness", "comfort_level"],
+}

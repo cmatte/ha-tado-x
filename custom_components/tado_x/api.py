@@ -22,7 +22,7 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
-
+_USE_ROOM_DEFAULT = object()
 
 class TadoXAuthError(Exception):
     """Exception for authentication errors."""
@@ -52,6 +52,9 @@ class TadoXApi:
         token_expiry: datetime | None = None,
         api_calls_today: int = 0,
         api_reset_time: datetime | None = None,
+        api_last_reset: datetime | None = None,
+        api_previous_used: int | None = None,
+        api_previous_quota: int | None = None,
         has_auto_assist: bool = False,
         on_token_refresh: callable | None = None,
     ) -> None:
@@ -63,24 +66,26 @@ class TadoXApi:
         self._home_id: int | None = None
         self._has_auto_assist = has_auto_assist
         self._on_token_refresh = on_token_refresh
+        # Tado rotates the refresh token on every use, so two concurrent
+        # refreshes make the second one fail (400 refresh_token_not_found).
+        self._token_lock = asyncio.Lock()
+        self._get_room_control_defaults = None
 
-        # Initialize API call tracking with persistence support
-        # Tado resets quotas at 12:00 UTC (noon), not midnight
-        now = datetime.now(timezone.utc)
-        default_reset_time = self._calculate_next_reset_time(now)
-
-        if api_reset_time and api_reset_time > now:
-            # Restore persisted values if reset time hasn't passed
-            self._api_calls_today = api_calls_today
-            self._api_call_reset_time = api_reset_time
-        else:
-            # Reset counter if new period or no persisted data
-            self._api_calls_today = 0
-            self._api_call_reset_time = default_reset_time
-
-        # Rate limit info from API headers (will be updated on each request)
-        self._api_quota_limit: int | None = None  # From ratelimit-policy header
-        self._api_quota_remaining: int | None = None  # From ratelimit header
+        # The server's daily quota counter, not a fixed UTC clock, determines
+        # the reset. The old fixed-time value is intentionally not migrated.
+        self._api_calls_today = max(0, api_calls_today)
+        self._api_last_reset = api_last_reset if (
+            api_last_reset is not None and api_last_reset.tzinfo is not None
+        ) else None
+        self._api_call_reset_time = (
+            self._api_last_reset + timedelta(hours=24)
+            if self._api_last_reset is not None else None
+        )
+        self._api_previous_used = api_previous_used
+        self._api_previous_quota = api_previous_quota
+        self._api_last_observed_at: datetime | None = None
+        self._api_quota_limit: int | None = None
+        self._api_quota_remaining: int | None = None
 
     @property
     def access_token(self) -> str | None:
@@ -113,9 +118,26 @@ class TadoXApi:
         return self._api_calls_today
 
     @property
-    def api_reset_time(self) -> datetime:
+    def api_reset_time(self) -> datetime | None:
         """Return when the API quota resets."""
         return self._api_call_reset_time
+
+    @property
+    def api_last_reset(self) -> datetime | None:
+        """Most recently observed server quota rollover."""
+        return self._api_last_reset
+
+    @property
+    def api_previous_used(self) -> int | None:
+        return self._api_previous_used
+
+    @property
+    def api_previous_quota(self) -> int | None:
+        return self._api_previous_quota
+
+    @property
+    def api_last_observed_at(self) -> datetime | None:
+        return self._api_last_observed_at
 
     @property
     def has_auto_assist(self) -> bool:
@@ -137,29 +159,34 @@ class TadoXApi:
         """Return the API quota remaining from headers (if available)."""
         return self._api_quota_remaining
 
-    @staticmethod
-    def _calculate_next_reset_time(now: datetime) -> datetime:
-        """Calculate the next API quota reset time.
+    def _observe_quota_usage(self, quota: int, remaining: int) -> None:
+        """Learn the server's daily reset from a genuine quota-counter drop.
 
-        Tado resets quotas at 12:00 UTC (noon). This method calculates
-        the next reset time based on the current time.
-
-        Args:
-            now: Current datetime in UTC
-
-        Returns:
-            Next reset time as datetime in UTC
+        Ignore counter changes caused by a different quota tier and small
+        fluctuations. The observation time is an approximation bounded by
+        consecutive requests, not an exact server-supplied reset timestamp.
         """
-        # Reset time is 12:00 UTC
-        reset_hour = 12
-        today_reset = now.replace(hour=reset_hour, minute=0, second=0, microsecond=0)
-
-        if now >= today_reset:
-            # Already past today's reset, next reset is tomorrow at noon
-            return today_reset + timedelta(days=1)
-        else:
-            # Today's reset hasn't happened yet
-            return today_reset
+        if quota <= 0 or not 0 <= remaining <= quota:
+            return
+        now = datetime.now(timezone.utc)
+        used = quota - remaining
+        previous = self._api_previous_used
+        previous_quota = self._api_previous_quota
+        if previous is not None and previous_quota == quota:
+            # A reset is a substantial drop to a low counter, not just a
+            # decrement due to server-side corrections or stale responses.
+            low = max(5, int(quota * 0.02))
+            significant = max(10, int(quota * 0.05))
+            if used <= low and previous - used >= significant:
+                self._api_last_reset = now
+                self._api_call_reset_time = now + timedelta(hours=24)
+                _LOGGER.info(
+                    "Observed Tado API quota reset (previous=%s, now=%s, quota=%s)",
+                    previous, used, quota,
+                )
+        self._api_previous_used = used
+        self._api_previous_quota = quota
+        self._api_last_observed_at = now
 
     def _parse_rate_limit_headers(self, headers: dict) -> None:
         """Parse rate limit information from Tado API response headers.
@@ -188,6 +215,10 @@ class TadoXApi:
             remaining_match = re.search(r"r=(\d+)", ratelimit_header)
             if remaining_match:
                 self._api_quota_remaining = int(remaining_match.group(1))
+                if self._api_quota_limit is not None:
+                    self._observe_quota_usage(
+                        self._api_quota_limit, self._api_quota_remaining
+                    )
 
     async def start_device_auth(self) -> dict[str, Any]:
         """Start the device authorization flow.
@@ -319,9 +350,28 @@ class TadoXApi:
         if not self._access_token:
             raise TadoXAuthError("Not authenticated")
 
-        # Refresh if token expires in less than 60 seconds
-        if self._token_expiry and datetime.now() >= self._token_expiry - timedelta(seconds=60):
-            await self.refresh_access_token()
+        if not self._token_is_stale():
+            return
+
+        # Every request passes through here, so a scheduled poll and several
+        # service calls can arrive together. Let one caller refresh; whoever
+        # waited finds the new token and leaves it alone.
+        async with self._token_lock:
+            if self._token_is_stale():
+                await self.refresh_access_token()
+
+    def _token_is_stale(self) -> bool:
+        """Return whether the access token expires in less than 60 seconds."""
+        return bool(
+            self._token_expiry
+            and datetime.now() >= self._token_expiry - timedelta(seconds=60)
+        )
+
+    async def _refresh_after_401(self, rejected_token: str | None) -> None:
+        """Refresh once after a 401, unless another caller already did."""
+        async with self._token_lock:
+            if self._access_token == rejected_token:
+                await self.refresh_access_token()
 
     async def _request(
         self,
@@ -335,14 +385,9 @@ class TadoXApi:
         # Track API call
         self._api_calls_today += 1
 
-        # Reset counter if past reset time (noon UTC)
-        now = datetime.now(timezone.utc)
-        if now >= self._api_call_reset_time:
-            self._api_calls_today = 1
-            self._api_call_reset_time = self._calculate_next_reset_time(now)
-
+        sent_token = self._access_token
         headers = {
-            "Authorization": f"Bearer {self._access_token}",
+            "Authorization": f"Bearer {sent_token}",
             "Content-Type": "application/json",
         }
 
@@ -357,8 +402,8 @@ class TadoXApi:
                 self._parse_rate_limit_headers(response.headers)
 
                 if response.status == 401:
-                    # Try to refresh token and retry
-                    await self.refresh_access_token()
+                    # Refresh the token (once for all concurrent callers) and retry
+                    await self._refresh_after_401(sent_token)
                     headers["Authorization"] = f"Bearer {self._access_token}"
                     async with self._session.request(
                         method,
@@ -427,12 +472,33 @@ class TadoXApi:
         room_id: int,
         temperature: float,
         power: str = "ON",
-        termination_type: str = "TIMER",
-        duration_seconds: int = 1800,
+        termination_type: str | None | object = _USE_ROOM_DEFAULT,
+        duration_seconds: int | None | object = _USE_ROOM_DEFAULT,
     ) -> None:
         """Set the temperature for a room."""
         if not self._home_id:
             raise TadoXApiError("Home ID not set")
+
+        # Obtain the configured defaults for this room.
+        defaults = None
+        if self._get_room_control_defaults is not None:
+            defaults = self._get_room_control_defaults(room_id)
+
+        # If the caller omitted termination_type, use the room default.
+        if termination_type is _USE_ROOM_DEFAULT:
+            termination_type = (
+                defaults.termination_type
+                if defaults is not None
+                else "TIMER"
+            )
+
+        # If the caller omitted duration, use the room default.
+        if duration_seconds is _USE_ROOM_DEFAULT:
+            duration_seconds = (
+                defaults.duration_minutes * 60
+                if defaults is not None
+                else 1800
+            )
 
         data: dict[str, Any] = {
             "setting": {
@@ -624,6 +690,53 @@ class TadoXApi:
             json_data={"childLockEnabled": enabled},
         )
 
+    async def set_room_manual_control_termination(
+        self,
+        room_id: int,
+        termination_type: str,
+        duration_seconds: int | None = None,
+    ) -> None:
+        """Set the Tado master manual-control termination setting for a room."""
+        if not self._home_id:
+            raise TadoXApiError("Home ID not set")
+
+        valid_types = {"NEXT_TIME_BLOCK", "TIMER", "MANUAL"}
+
+        if termination_type not in valid_types:
+            raise ValueError(
+                f"Invalid termination type: {termination_type}. "
+                f"Expected one of {sorted(valid_types)}"
+            )
+
+        termination: dict[str, Any] = {
+            "type": termination_type,
+        }
+
+        if termination_type == "TIMER":
+            if duration_seconds is None:
+                raise ValueError(
+                    "duration_seconds is required when termination_type is TIMER"
+                )
+            termination["durationInSeconds"] = duration_seconds
+
+        data = {
+            "deviceManualControlTermination": termination,
+        }
+
+        _LOGGER.debug(
+            "Setting room %s manual control termination: %s",
+            room_id,
+            data,
+        )
+
+        await self._request(
+            "PATCH",
+            f"{TADO_HOPS_API_URL}/homes/{self._home_id}"
+            f"/roomsAndDevices/rooms/{room_id}",
+            json_data=data,
+        )
+
+
     # Quick Actions
     async def boost_all_heating(self) -> None:
         """Boost heating in all rooms."""
@@ -760,6 +873,207 @@ class TadoXApi:
         )
         return result if isinstance(result, dict) else {}
 
+    # Schedule endpoints (Tado X / Hops API, rooms)
+    async def get_zone_schedule(self, room_id: int) -> dict[str, Any]:
+        """Get the active smart schedule for a room.
+
+        Returns the Tado X schedule: a dict with the room and a list of
+        day blocks (dayType, start, end, setting).
+        """
+        if not self._home_id:
+            raise TadoXApiError("Home ID not set")
+
+        result = await self._request(
+            "GET",
+            f"{TADO_HOPS_API_URL}/homes/{self._home_id}/rooms/{room_id}/schedule",
+        )
+        return result if isinstance(result, dict) else {}
+
+    @staticmethod
+    def _normalize_away_configuration(config: dict[str, Any], room_id: int) -> dict[str, Any]:
+        """Validate Tado X room Away settings; strip response-only roomId."""
+        if not isinstance(config, dict):
+            raise TadoXApiError("Tado X Away configuration is not a JSON object")
+        if "roomId" in config and str(config["roomId"]) != str(room_id):
+            raise TadoXApiError(
+                f"Tado X Away response roomId mismatch: expected {room_id}, "
+                f"got {config['roomId']}"
+            )
+        mode = config.get("mode")
+        if mode not in ("ON", "OFF"):
+            raise TadoXApiError(f"Unexpected Tado X Away mode: {mode!r}")
+        level = config.get("preheatingLevel")
+        if not isinstance(level, str) or not level:
+            raise TadoXApiError("Tado X Away preheatingLevel missing or invalid")
+        temperature = config.get("awayTemperatureCelsius")
+        if mode == "ON":
+            if (isinstance(temperature, bool) or
+                    not isinstance(temperature, (int, float)) or
+                    not 0 < temperature < 50):
+                raise TadoXApiError("Tado X Away ON requires a valid temperature")
+        elif temperature is not None:
+            raise TadoXApiError("Tado X Away OFF must have null temperature")
+        return {
+            "mode": mode,
+            "awayTemperatureCelsius": temperature,
+            "preheatingLevel": level,
+        }
+
+    async def get_zone_away_configuration(self, room_id: int) -> dict[str, Any]:
+        """Read saved per-room Tado X Away configuration from Hops API."""
+        if not self._home_id:
+            raise TadoXApiError("Home ID not set")
+        result = await self._request(
+            "GET",
+            f"{TADO_HOPS_API_URL}/homes/{self._home_id}/settings/away/rooms/{room_id}",
+        )
+        return self._normalize_away_configuration(result, room_id)
+
+    async def set_zone_away_configuration(self, room_id: int, config: dict[str, Any]) -> None:
+        """Write saved Away settings, preserving mode, temperature and preheating."""
+        if not self._home_id:
+            raise TadoXApiError("Home ID not set")
+        payload = self._normalize_away_configuration(config, room_id)
+        await self._request(
+            "PUT",
+            f"{TADO_HOPS_API_URL}/homes/{self._home_id}/settings/away/rooms/{room_id}",
+            json_data=payload,
+        )
+
+    async def set_zone_schedule(
+        self,
+        room_id: int,
+        day_type: str,
+        day_schedule: list[dict[str, Any]],
+    ) -> None:
+        """Set the smart schedule blocks for a room.
+
+        Args:
+            room_id: Tado X room ID.
+            day_type: One of MONDAY_TO_SUNDAY, MONDAY_TO_FRIDAY, SATURDAY, ...
+            day_schedule: List of blocks. Each block is a dict with
+                dayType, start, end, geolocationOverride and setting.
+        """
+        if not self._home_id:
+            raise TadoXApiError("Home ID not set")
+
+        await self._request(
+            "POST",
+            f"{TADO_HOPS_API_URL}/homes/{self._home_id}/rooms/{room_id}/schedule",
+            json_data={"dayType": day_type, "daySchedule": day_schedule},
+        )
+
+    # Historic data endpoints (My Tado API, zones)
+    async def get_zone_day_report(self, zone_id: int, date_str: str) -> dict[str, Any]:
+        """Get the historical day report for a zone (temperature, humidity, heating).
+
+        Args:
+            zone_id: Zone ID (for Tado X this equals the room ID).
+            date_str: Date in YYYY-MM-DD format.
+
+        Raises:
+            TadoXApiError: on error, including 403 accessDenied for past days
+                when the account has no Auto-Assist (Premium) subscription.
+        """
+        if not self._home_id:
+            raise TadoXApiError("Home ID not set")
+
+        result = await self._request(
+            "GET",
+            f"{TADO_MY_API_URL}/homes/{self._home_id}/zones/{zone_id}/dayReport?date={date_str}",
+        )
+        return result if isinstance(result, dict) else {}
+
+    # Holiday mode endpoints (Hops API, home settings — Auto-Assist skill)
+    async def get_holiday_mode(self) -> dict[str, Any]:
+        """Get the home's holiday mode settings.
+
+        Returns the settings dict (enabled, active, startDate, endDate,
+        roomSettings, hotWaterSettings) or {} when not configured.
+
+        Raises:
+            TadoXApiError: when unavailable (e.g. no Auto-Assist subscription).
+        """
+        if not self._home_id:
+            raise TadoXApiError("Home ID not set")
+
+        result = await self._request(
+            "GET",
+            f"{TADO_HOPS_API_URL}/homes/{self._home_id}/settings/holidayMode",
+        )
+        return result if isinstance(result, dict) else {}
+
+    async def set_holiday_mode(
+        self,
+        enabled: bool,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> None:
+        """Enable/disable holiday mode and optionally set its date range.
+
+        Toggle-only PATCH sends only enabled; explicit date changes preserve
+        existing room and hot-water settings. Dates are ISO-8601.
+        """
+        if not self._home_id:
+            raise TadoXApiError("Home ID not set")
+
+        # Only send writable fields. Echoing a GET response back to PATCH can
+        # include server-managed properties (such as active) and silently fail.
+        # Retain existing dates when the caller supplies only one boundary.
+        current = await self.get_holiday_mode()
+        if not isinstance(current.get("roomSettings"), dict):
+            raise TadoXApiError("Holiday settings incomplete; refusing unsafe update")
+
+        date_update = start_date is not None or end_date is not None
+        body: dict[str, Any] = {"enabled": enabled}
+        if date_update:
+            body["startDate"] = start_date if start_date is not None else current.get("startDate")
+            body["endDate"] = end_date if end_date is not None else current.get("endDate")
+            if not body["startDate"] or not body["endDate"]:
+                raise TadoXApiError(
+                    "Both holiday dates must be available to update the holiday period"
+                )
+            try:
+                start = datetime.fromisoformat(body["startDate"].replace("Z", "+00:00"))
+                end = datetime.fromisoformat(body["endDate"].replace("Z", "+00:00"))
+                if start.tzinfo is None or end.tzinfo is None or end <= start:
+                    raise ValueError("invalid date range")
+            except (TypeError, ValueError, AttributeError) as err:
+                raise TadoXApiError("Holiday end must be after start; both dates must include a timezone") from err
+
+        await self._request(
+            "PATCH",
+            f"{TADO_HOPS_API_URL}/homes/{self._home_id}/settings/holidayMode",
+            json_data=body,
+        )
+
+        if date_update:
+            # Tado can acknowledge a PATCH without applying the date change.
+            # A read-back also ensures the minimal PATCH did not alter settings.
+            actual = await self.get_holiday_mode()
+            def same_instant(left: Any, right: Any) -> bool:
+                try:
+                    return datetime.fromisoformat(str(left).replace("Z", "+00:00")) == datetime.fromisoformat(str(right).replace("Z", "+00:00"))
+                except ValueError:
+                    return False
+
+            if (
+                actual.get("enabled") is not enabled
+                or not same_instant(actual.get("startDate"), body["startDate"])
+                or not same_instant(actual.get("endDate"), body["endDate"])
+            ):
+                raise TadoXApiError(
+                    "Tado acknowledged the holiday update but did not retain the "
+                    "requested enabled state and dates. Check the Tado app and "
+                    "Home Assistant logs."
+                )
+            for field in ("roomSettings", "hotWaterSettings"):
+                if field in current and actual.get(field) != current[field]:
+                    raise TadoXApiError(
+                        f"Tado changed {field} while updating holiday dates; "
+                        "review the holiday settings in the Tado app"
+                    )
+
     # Running Times endpoints (Minder API)
     async def get_running_times(self, from_date: str, to_date: str) -> dict[str, Any]:
         """Get running times data for heating statistics.
@@ -857,3 +1171,163 @@ class TadoXApi:
             f"{TADO_HOPS_API_URL}/homes/{self._home_id}/settings/flowTemperatureOptimization",
             json_data={"autoAdaptation": {"enabled": enabled}},
         )
+
+
+    async def get_domestic_hot_water_state(self) -> dict[str, Any]:
+        """Get the status of domestic hot water.
+
+        Returns:
+            Status information including:
+            {
+                "status": "OFF" | "SCHEDULE_OFF" |"SCHEDULE_ON" | "BOOST",
+                "nextStateChange": "2026-02-14T16:00:00Z",
+                "setpoint": null,
+                "setpointConstraints": null
+            }
+        """
+        if not self._home_id:
+            raise TadoXApiError("Home ID not set")
+
+        result = await self._request(
+            "GET",
+            f"{TADO_HOPS_API_URL}/homes/{self._home_id}/programmer/domesticHotWater/state",
+        )
+        return result if isinstance(result, dict) else {}
+
+    async def boost_domestic_hot_water(self) -> None:
+        """Boost domestic hot water."""
+        if not self._home_id:
+            raise TadoXApiError("Home ID not set")
+
+        await self._request(
+            "POST",
+            f"{TADO_HOPS_API_URL}/homes/{self._home_id}/programmer/domesticHotWater/boost",
+            json_data={ "boost": "ON" },
+        )
+
+    async def disable_domestic_hot_water(self) -> None:
+        """Turn off domestic hot water."""
+        if not self._home_id:
+            raise TadoXApiError("Home ID not set")
+
+        await self._request(
+            "POST",
+            f"{TADO_HOPS_API_URL}/homes/{self._home_id}/programmer/domesticHotWater/boost",
+            json_data={ "boost": "OFF" },
+        )
+
+    async def resume_domestic_hot_water_schedule(self) -> None:
+        """Resume the schedule for domestic hot water."""
+        if not self._home_id:
+            raise TadoXApiError("Home ID not set")
+
+        await self._request(
+            "POST",
+            f"{TADO_HOPS_API_URL}/homes/{self._home_id}/programmer/domesticHotWater/resumeSchedule",
+        )
+
+
+def summarize_day_report(report: dict[str, Any]) -> dict[str, Any]:
+    """Reduce a raw dayReport to a compact temperature/humidity/heating summary.
+
+    The dayReport returns two series shapes: ``dataPoints`` (timestamp + value,
+    used for insideTemperature and humidity) and ``dataIntervals`` (from/to +
+    value, used for callForHeat / settings / stripes). Both are flattened here.
+    """
+
+    def _series_values(series: dict[str, Any] | None, value_key: str | None) -> list[float]:
+        out: list[float] = []
+        for point in (series or {}).get("dataPoints") or []:
+            value = point.get("value")
+            if value_key and isinstance(value, dict):
+                value = value.get(value_key)
+            if isinstance(value, (int, float)):
+                out.append(float(value))
+        for interval in (series or {}).get("dataIntervals") or []:
+            value = interval.get("value")
+            if value_key and isinstance(value, dict):
+                value = value.get(value_key)
+            if isinstance(value, (int, float)):
+                out.append(float(value))
+        return out
+
+    def _avg(vals: list[float]) -> float | None:
+        return round(sum(vals) / len(vals), 1) if vals else None
+
+    def _interval_hours(interval: dict[str, Any]) -> float:
+        try:
+            start = datetime.fromisoformat(interval["from"].replace("Z", "+00:00"))
+            end = datetime.fromisoformat(interval["to"].replace("Z", "+00:00"))
+            return (end - start).total_seconds() / 3600.0
+        except (KeyError, TypeError, ValueError):
+            return 0.0
+
+    measured = report.get("measuredData") or {}
+
+    temps = _series_values(measured.get("insideTemperature"), "celsius")
+    # dayReport humidity values are 0.0-1.0 fractions despite valueType "percentage"
+    hums_pct = [round(h * 100, 1) for h in _series_values(measured.get("humidity"), None)]
+
+    # Heating time: callForHeat marks actual boiler demand ("HEATING" vs "NONE");
+    # fall back to the scheduled settings (power == "ON") when absent.
+    heating_hours: float | None = None
+    call_for_heat = (report.get("callForHeat") or {}).get("dataIntervals") or []
+    if call_for_heat:
+        heating_hours = round(
+            sum(_interval_hours(iv) for iv in call_for_heat if iv.get("value") != "NONE"),
+            1,
+        )
+    else:
+        settings = (report.get("settings") or {}).get("dataIntervals") or []
+        if settings:
+            heating_hours = round(
+                sum(
+                    _interval_hours(iv)
+                    for iv in settings
+                    if (iv.get("value") or {}).get("power") == "ON"
+                ),
+                1,
+            )
+
+    return {
+        "temperature_avg": _avg(temps),
+        "temperature_min": round(min(temps), 1) if temps else None,
+        "temperature_max": round(max(temps), 1) if temps else None,
+        "humidity_avg": _avg(hums_pct),
+        "heating_hours": heating_hours,
+    }
+
+
+if __name__ == "__main__":
+    # Self-check against the live dayReport shape.
+    _sample = {
+        "measuredData": {
+            "insideTemperature": {
+                "dataPoints": [
+                    {"timestamp": "2026-10-13T00:00:00Z", "value": {"celsius": 19.0}},
+                    {"timestamp": "2026-10-13T00:15:00Z", "value": {"celsius": 21.0}},
+                ]
+            },
+            "humidity": {
+                "dataPoints": [
+                    {"timestamp": "2026-10-13T00:00:00Z", "value": 0.60},
+                    {"timestamp": "2026-10-13T00:15:00Z", "value": 0.728},
+                ]
+            },
+        },
+        "callForHeat": {
+            "dataIntervals": [
+                {"from": "2026-10-13T00:00:00Z", "to": "2026-10-13T01:00:00Z", "value": "HEATING"},
+                {"from": "2026-10-13T01:00:00Z", "to": "2026-10-13T02:00:00Z", "value": "NONE"},
+            ]
+        },
+    }
+    _summary = summarize_day_report(_sample)
+    assert _summary["temperature_avg"] == 20.0, _summary
+    assert _summary["temperature_min"] == 19.0, _summary
+    assert _summary["temperature_max"] == 21.0, _summary
+    assert _summary["humidity_avg"] == 66.4, _summary
+    assert _summary["heating_hours"] == 1.0, _summary
+    # empty report returns all-None
+    assert summarize_day_report({})["temperature_avg"] is None
+    print("summarize_day_report OK:", _summary)

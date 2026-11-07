@@ -17,6 +17,7 @@ from .const import (
     CONF_ACCESS_TOKEN,
     CONF_ENABLE_AIR_COMFORT,
     CONF_ENABLE_FLOW_TEMP,
+    CONF_ENABLE_HOT_WATER,
     CONF_ENABLE_MOBILE_DEVICES,
     CONF_ENABLE_RUNNING_TIMES,
     CONF_ENABLE_WEATHER,
@@ -25,8 +26,13 @@ from .const import (
     CONF_HOME_NAME,
     CONF_REFRESH_TOKEN,
     CONF_SCAN_INTERVAL,
+    CONF_ENABLE_SCHEDULE_POLLING,
+    CONF_SCHEDULE_POLL_INTERVAL,
+    DEFAULT_SCHEDULE_POLL_INTERVAL,
+    MIN_SCHEDULE_POLL_INTERVAL,
     CONF_TOKEN_EXPIRY,
     DOMAIN,
+    FEATURE_ENTITY_MAP,
     SCAN_INTERVAL_AUTO_ASSIST,
     SCAN_INTERVAL_FREE_TIER,
 )
@@ -258,6 +264,43 @@ class TadoXConfigFlow(ConfigFlow, domain=DOMAIN):
 class TadoXOptionsFlow(OptionsFlow):
     """Handle Tado X options."""
 
+    async def _update_entity_states(
+        self, coordinator: Any
+    ) -> None:
+        """Update entity enabled/disabled states based on feature flags."""
+        from homeassistant.helpers import entity_registry as er
+        
+        entity_registry = er.async_get(self.hass)
+        
+        # Check each feature and its corresponding entities
+        for feature_flag, entity_keys in FEATURE_ENTITY_MAP.items():
+            feature_enabled = getattr(coordinator, feature_flag, False)
+            
+            # Find all entities matching this feature
+            # entity_registry.entities is a dict with entity_id as key
+            for entity_id, entity_entry in list(entity_registry.entities.items()):
+                # Only process Tado X sensor or button entities
+                if entity_entry.platform != DOMAIN or entity_entry.domain not in ("sensor", "button", "select"):
+                    continue
+                
+                if entity_entry.config_entry_id != self.config_entry.entry_id:
+                    continue
+
+                if entity_entry.disabled_by not in (None, er.RegistryEntryDisabler.INTEGRATION):
+                    continue
+
+                # Check if this entity's unique_id ends with the feature key
+                if entity_entry.unique_id:
+                    # unique_id format is like: "123456_dhw_state" for sensors or "123456_boost_hot_water" for buttons
+                    for entity_key in entity_keys:
+                        if entity_entry.unique_id.endswith(f"_{entity_key}"):
+                            # Update the entity's disabled_by state
+                            entity_registry.async_update_entity(
+                                entity_id,
+                                disabled_by=None if feature_enabled else er.RegistryEntryDisabler.INTEGRATION,
+                            )
+                            break
+
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
@@ -265,6 +308,8 @@ class TadoXOptionsFlow(OptionsFlow):
         if user_input is not None:
             has_auto_assist = user_input[CONF_HAS_AUTO_ASSIST]
             custom_interval = user_input.get(CONF_SCAN_INTERVAL)
+            enable_schedule_polling = user_input.get(CONF_ENABLE_SCHEDULE_POLLING, has_auto_assist)
+            schedule_poll_interval = user_input.get(CONF_SCHEDULE_POLL_INTERVAL, DEFAULT_SCHEDULE_POLL_INTERVAL)
 
             # Get feature toggles
             enable_weather = user_input.get(CONF_ENABLE_WEATHER, has_auto_assist)
@@ -272,6 +317,7 @@ class TadoXOptionsFlow(OptionsFlow):
             enable_air_comfort = user_input.get(CONF_ENABLE_AIR_COMFORT, has_auto_assist)
             enable_running_times = user_input.get(CONF_ENABLE_RUNNING_TIMES, has_auto_assist)
             enable_flow_temp = user_input.get(CONF_ENABLE_FLOW_TEMP, has_auto_assist)
+            enable_hot_water = user_input.get(CONF_ENABLE_HOT_WATER, has_auto_assist)
 
             # Determine scan interval: custom if set, otherwise based on tier
             if custom_interval and custom_interval > 0:
@@ -287,11 +333,14 @@ class TadoXOptionsFlow(OptionsFlow):
                 **self.config_entry.data,
                 CONF_HAS_AUTO_ASSIST: has_auto_assist,
                 CONF_SCAN_INTERVAL: scan_interval,
+                CONF_ENABLE_SCHEDULE_POLLING: enable_schedule_polling,
+                CONF_SCHEDULE_POLL_INTERVAL: schedule_poll_interval,
                 CONF_ENABLE_WEATHER: enable_weather,
                 CONF_ENABLE_MOBILE_DEVICES: enable_mobile_devices,
                 CONF_ENABLE_AIR_COMFORT: enable_air_comfort,
                 CONF_ENABLE_RUNNING_TIMES: enable_running_times,
                 CONF_ENABLE_FLOW_TEMP: enable_flow_temp,
+                CONF_ENABLE_HOT_WATER: enable_hot_water,
             }
             self.hass.config_entries.async_update_entry(
                 self.config_entry,
@@ -303,16 +352,25 @@ class TadoXOptionsFlow(OptionsFlow):
                 coordinator = self.hass.data[DOMAIN][self.config_entry.entry_id]
                 coordinator.api.has_auto_assist = has_auto_assist
                 coordinator.update_scan_interval(scan_interval)
+                manager = getattr(coordinator, "schedule_profile_manager", None)
+                if manager is not None:
+                    manager.configure_polling(enable_schedule_polling, schedule_poll_interval)
                 # Update feature flags
                 coordinator.enable_weather = enable_weather
                 coordinator.enable_mobile_devices = enable_mobile_devices
                 coordinator.enable_air_comfort = enable_air_comfort
                 coordinator.enable_running_times = enable_running_times
                 coordinator.enable_flow_temp = enable_flow_temp
+                coordinator.enable_hot_water = enable_hot_water
+
+                # Handle entity state changes when features are toggled
+                await self._update_entity_states(coordinator)
 
             return self.async_create_entry(title="", data={})
 
         current_auto_assist = self.config_entry.data.get(CONF_HAS_AUTO_ASSIST, False)
+        current_schedule_polling = self.config_entry.data.get(CONF_ENABLE_SCHEDULE_POLLING, current_auto_assist)
+        current_schedule_interval = self.config_entry.data.get(CONF_SCHEDULE_POLL_INTERVAL, DEFAULT_SCHEDULE_POLL_INTERVAL)
         current_interval = self.config_entry.data.get(CONF_SCAN_INTERVAL, 0)
 
         # Feature toggles - default to True for Auto-Assist, False for free tier
@@ -323,6 +381,7 @@ class TadoXOptionsFlow(OptionsFlow):
         current_enable_air_comfort = self.config_entry.data.get(CONF_ENABLE_AIR_COMFORT, default_features)
         current_enable_running_times = self.config_entry.data.get(CONF_ENABLE_RUNNING_TIMES, default_features)
         current_enable_flow_temp = self.config_entry.data.get(CONF_ENABLE_FLOW_TEMP, default_features)
+        current_enable_hot_water = self.config_entry.data.get(CONF_ENABLE_HOT_WATER, default_features)
 
         # Suggested intervals based on tier
         default_interval = (
@@ -343,6 +402,12 @@ class TadoXOptionsFlow(OptionsFlow):
                         default=current_interval if current_interval > 0 else default_interval,
                     ): vol.All(vol.Coerce(int), vol.Range(min=30, max=3600)),
                     vol.Required(
+                        CONF_ENABLE_SCHEDULE_POLLING, default=current_schedule_polling,
+                    ): bool,
+                    vol.Required(
+                        CONF_SCHEDULE_POLL_INTERVAL, default=current_schedule_interval,
+                    ): vol.All(vol.Coerce(int), vol.Range(min=MIN_SCHEDULE_POLL_INTERVAL, max=86400)),
+                    vol.Required(
                         CONF_ENABLE_WEATHER,
                         default=current_enable_weather,
                     ): bool,
@@ -361,6 +426,10 @@ class TadoXOptionsFlow(OptionsFlow):
                     vol.Required(
                         CONF_ENABLE_FLOW_TEMP,
                         default=current_enable_flow_temp,
+                    ): bool,
+                    vol.Required(
+                        CONF_ENABLE_HOT_WATER,
+                        default=current_enable_hot_water,
                     ): bool,
                 }
             ),

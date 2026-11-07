@@ -10,6 +10,7 @@ from homeassistant.components.climate import (
     HVACAction,
     HVACMode,
 )
+from homeassistant.util import dt as dt_util
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
 from homeassistant.core import HomeAssistant, callback
@@ -17,9 +18,8 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .device_helpers import via_device_kwargs
 from .const import (
-    DEFAULT_TIMER_DURATION,
+    DEFAULT_TIMER_DURATION_MINUTES,
     DOMAIN,
     MAX_TEMP,
     MIN_TEMP,
@@ -52,20 +52,12 @@ async def async_setup_entry(
     async_add_entities(entities)
 
 
-_NATIVE_TEMPERATURES = hasattr(ClimateEntity, "native_current_temperature")
-
-
 class TadoXClimate(CoordinatorEntity[TadoXDataUpdateCoordinator], ClimateEntity):
     """Tado X Climate entity for a room."""
 
     _attr_has_entity_name = True
     _attr_name = None
-    # HA 2026.11 renames the temperature unit and values to native_*
-    # (the old names stop working in 2027.11).
-    if _NATIVE_TEMPERATURES:
-        _attr_native_temperature_unit = UnitOfTemperature.CELSIUS
-    else:
-        _attr_temperature_unit = UnitOfTemperature.CELSIUS
+    _attr_native_temperature_unit = UnitOfTemperature.CELSIUS
     _attr_supported_features = (
         ClimateEntityFeature.TARGET_TEMPERATURE
         | ClimateEntityFeature.PRESET_MODE
@@ -105,7 +97,7 @@ class TadoXClimate(CoordinatorEntity[TadoXDataUpdateCoordinator], ClimateEntity)
             name=room_name,
             manufacturer="Tado",
             model="Tado X Room",
-            **via_device_kwargs(self, (DOMAIN, str(self.coordinator.home_id))),
+            via_device_id=self.coordinator.parent_device_ids[(DOMAIN, str(self.coordinator.home_id))],
         )
 
     @property
@@ -133,10 +125,6 @@ class TadoXClimate(CoordinatorEntity[TadoXDataUpdateCoordinator], ClimateEntity)
         if room.power == "OFF" and room.manual_control_active:
             return None
         return room.target_temperature
-
-    if not _NATIVE_TEMPERATURES:
-        current_temperature = native_current_temperature
-        target_temperature = native_target_temperature
 
     @property
     def current_humidity(self) -> float | None:
@@ -238,6 +226,13 @@ class TadoXClimate(CoordinatorEntity[TadoXDataUpdateCoordinator], ClimateEntity)
 
         if room.open_window_detected:
             attrs["open_window_detected"] = True
+            if room.open_window_ends_at:
+                ends_at = dt_util.parse_datetime(room.open_window_ends_at)
+                if ends_at is not None and ends_at.tzinfo is not None:
+                    attrs["open_window_ends_at"] = room.open_window_ends_at
+                    attrs["open_window_remaining_minutes"] = round(
+                        max(0, (ends_at - dt_util.utcnow()).total_seconds()) / 60
+                    )
 
         return attrs
 
@@ -272,11 +267,15 @@ class TadoXClimate(CoordinatorEntity[TadoXDataUpdateCoordinator], ClimateEntity)
         if temperature is None:
             return
 
+        defaults = self.coordinator.get_room_control_defaults(self._room_id)
+        termination_type = kwargs.get("termination_type", defaults.termination_type)
+        duration_minutes = kwargs.get("duration", defaults.duration_minutes)
+
         await self.coordinator.api.set_room_temperature(
             self._room_id,
             temperature=temperature,
-            termination_type=TERMINATION_TIMER,
-            duration_seconds=DEFAULT_TIMER_DURATION,
+            termination_type=termination_type,
+            duration_seconds=duration_minutes * 60,
         )
         await self.coordinator.async_request_refresh()
 

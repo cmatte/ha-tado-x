@@ -11,8 +11,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .device_helpers import via_device_kwargs
-from .const import DOMAIN
+from .const import DEVICE_TYPE_NAMES, DOMAIN
 from .coordinator import TadoXDataUpdateCoordinator, TadoXDevice, TadoXRoom
 
 _LOGGER = logging.getLogger(__name__)
@@ -41,6 +40,7 @@ async def async_setup_entry(
     if coordinator.data and coordinator.data.has_flow_temp_control:
         entities.append(TadoXFlowTempAutoAdaptationSwitch(coordinator))
 
+    entities.append(TadoXHolidayModeSwitch(coordinator))
     async_add_entities(entities)
 
 
@@ -81,29 +81,14 @@ class TadoXChildLockSwitch(CoordinatorEntity[TadoXDataUpdateCoordinator], Switch
                 identifiers={(DOMAIN, self._serial_number)},
             )
 
-        device_type_names_fr = {
-            "VA04": "Vanne",
-            "SU04": "Capteur Temp",
-            "TR04": "Récepteur",  # Wireless Receiver X
-            "RU04": "Thermostat",  # Wired Smart Thermostat X
-            "IB02": "Bridge X",
-        }
 
-        device_type_models = {
-            "VA04": "Radiator Valve X",
-            "SU04": "Temperature Sensor X",
-            "TR04": "Wireless Receiver X",
-            "RU04": "Wired Smart Thermostat X",
-            "IB02": "Bridge X",
-        }
-
-        via_identifier = (
+        via_device_identifier = (
             (DOMAIN, f"{self.coordinator.home_id}_{device.room_id}")
             if device.room_id
             else (DOMAIN, str(self.coordinator.home_id))
         )
 
-        base_name = device_type_names_fr.get(device.device_type, device.device_type)
+        base_name = DEVICE_TYPE_NAMES.get(device.device_type, device.device_type)
 
         if device.room_id and device.room_name:
             same_type_in_room = sorted([
@@ -123,9 +108,10 @@ class TadoXChildLockSwitch(CoordinatorEntity[TadoXDataUpdateCoordinator], Switch
             identifiers={(DOMAIN, self._serial_number)},
             name=device_name,
             manufacturer="Tado",
-            model=device_type_models.get(device.device_type, device.device_type),
+            model=DEVICE_TYPE_NAMES.get(device.device_type, device.device_type),
+            serial_number=device.serial_number,
             sw_version=device.firmware_version,
-            **via_device_kwargs(self, via_identifier),
+            via_device_id=self.coordinator.parent_device_ids[via_device_identifier],
         )
 
     @property
@@ -196,7 +182,7 @@ class TadoXOpenWindowSwitch(CoordinatorEntity[TadoXDataUpdateCoordinator], Switc
             name=room_name,
             manufacturer="Tado",
             model="Tado X Room",
-            **via_device_kwargs(self, (DOMAIN, str(self.coordinator.home_id))),
+            via_device_id=self.coordinator.parent_device_ids[(DOMAIN, str(self.coordinator.home_id))],
         )
 
     @property
@@ -279,3 +265,35 @@ class TadoXFlowTempAutoAdaptationSwitch(CoordinatorEntity[TadoXDataUpdateCoordin
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
         self.async_write_ha_state()
+
+
+class TadoXHolidayModeSwitch(CoordinatorEntity[TadoXDataUpdateCoordinator], SwitchEntity):
+    """Home-level holiday enable switch."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Holiday Mode"
+    _attr_translation_key = "holiday_mode"
+    _attr_icon = "mdi:beach"
+
+    def __init__(self, coordinator):
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.home_id}_holiday_mode"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(identifiers={(DOMAIN, str(self.coordinator.home_id))})
+
+    @property
+    def available(self) -> bool:
+        return self.coordinator.holiday_mode_manager.data is not None
+
+    @property
+    def is_on(self) -> bool | None:
+        data = self.coordinator.holiday_mode_manager.data
+        return data.get("enabled") if data else None
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        await self.coordinator.holiday_mode_manager.set_enabled(True)
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        await self.coordinator.holiday_mode_manager.set_enabled(False)

@@ -1,204 +1,102 @@
-# Contributing to Tado X Integration
+# Contributing to Tado X Enhanced
 
-Thank you for your interest in contributing to the Tado X integration for Home Assistant!
+Thank you for your interest in improving **Tado X Enhanced**, an independently maintained Home Assistant integration derived from [exabird/ha-tado-x](https://github.com/exabird/ha-tado-x).
 
-## How to Contribute
+This guide describes how to report issues, suggest enhancements, and contribute code. The integration retains the Home Assistant domain `tado_x`.
 
-### Reporting Issues
+## Reporting bugs and requesting features
 
-Before creating a new issue, please:
-1. Search [existing issues](https://github.com/exabird/ha-tado-x/issues) to avoid duplicates
-2. Use the appropriate template:
-   - [Bug Report](https://github.com/exabird/ha-tado-x/issues/new?template=bug_report.md) for bugs
-   - [Feature Request](https://github.com/exabird/ha-tado-x/issues/new?template=feature_request.md) for new features
-3. Include as much detail as possible
+Before opening an issue, search [existing issues](https://github.com/rleatherb/ha-tado-x-enhanced/issues) for a similar report. For bugs, please include:
 
-### Submitting Code
+- The installed Tado X Enhanced release and Home Assistant version.
+- Whether one or multiple Tado homes are configured.
+- The affected device or entity type, action name, and the steps needed to reproduce the problem.
+- Expected versus actual behaviour, and relevant Home Assistant log messages.
+- Whether the problem persists after restarting Home Assistant, if relevant.
 
-1. **Fork** this repository
-2. **Create a branch** for your feature:
-   ```bash
-   git checkout -b feature/my-feature
-   ```
-3. **Make your changes** following the code style guidelines below
-4. **Test thoroughly** with real Tado X hardware
-5. **Commit** with clear, descriptive messages
-6. **Push** to your fork and create a Pull Request
+For feature requests, describe the use case and how the proposed behaviour should work. Please open an issue before starting a substantial change to the integration's architecture, API handling, or stored data format.
 
-## Development Setup
+> **Protect private information:** Never post passwords, access or refresh tokens, account identifiers, personal addresses, or unredacted API responses. Review logs and screenshots carefully before sharing them.
 
-### Requirements
+## Proposing code changes
 
-- Home Assistant development environment
-- Tado X hardware for testing
-- Python 3.11+
-- Git
+1. Fork [rleatherb/ha-tado-x-enhanced](https://github.com/rleatherb/ha-tado-x-enhanced).
+2. Create a dedicated branch for the change.
+3. Keep the changes focused, with descriptive commits.
+4. Test the change and describe the tests performed (and any tests you could not perform).
+5. Open a pull request against the repository's main branch, explaining the problem, solution, and any compatibility implications.
 
-### Local Development
+GitHub Desktop can be used for cloning, branching, committing and publishing changes; command-line Git is not required.
 
-1. Clone your fork:
-   ```bash
-   git clone https://github.com/YOUR_USERNAME/ha-tado-x.git
-   cd ha-tado-x
-   ```
+## Development environment
 
-2. Link to your Home Assistant installation:
-   ```bash
-   ln -s $(pwd)/custom_components/tado_x ~/.homeassistant/custom_components/tado_x
-   ```
+You will need a Home Assistant test installation, a suitable Python development environment, and, for live integration tests, access to Tado X hardware and an account. Install the integration under:
 
-3. Restart Home Assistant to load the integration
-
-4. Enable debug logging in `configuration.yaml`:
-   ```yaml
-   logger:
-     default: info
-     logs:
-       custom_components.tado_x: debug
-   ```
-
-### Testing
-
-- Test all changes with real Tado X devices
-- Verify all device types work (VA04, SU04, TR04, IB02)
-- Check logs for errors or warnings
-- Test edge cases (network issues, auth failures, etc.)
-
-## Code Style Guidelines
-
-### Python Code
-
-- Follow [PEP 8](https://www.python.org/dev/peps/pep-0008/)
-- Use type hints for function parameters and return values
-- Add docstrings for all public functions and classes
-- Keep functions focused and single-purpose
-- Use meaningful variable names
-
-### Example:
-
-```python
-async def set_temperature_offset(
-    self,
-    device_id: str,
-    offset: float,
-) -> None:
-    """Set the temperature offset for a device.
-
-    Args:
-        device_id: Serial number of the device
-        offset: Temperature offset in °C (-9.9 to +9.9)
-
-    Raises:
-        TadoXApiError: If the API request fails
-    """
-    if not self._home_id:
-        raise TadoXApiError("Home ID not set")
-
-    await self._request(
-        "PATCH",
-        f"{TADO_HOPS_API_URL}/homes/{self._home_id}/devices/{device_id}",
-        json_data={"temperatureOffset": offset},
-    )
+```text
+config/custom_components/tado_x/
 ```
 
-### Commit Messages
+Restart Home Assistant after changing integration Python files or its manifest. For diagnostics, you can temporarily enable:
 
-Use clear, descriptive commit messages:
-
-```
-Add temperature offset adjustment service
-
-- Implement set_temperature_offset in TadoXApi
-- Add tado_x.set_temperature_offset service
-- Update services.yaml with new service definition
-- Add tests for temperature offset functionality
-
-Closes #3
+```yaml
+logger:
+  default: warning
+  logs:
+    custom_components.tado_x: debug
 ```
 
-## Architecture Overview
+Turn off verbose logging when no longer needed. Do not submit unredacted logs.
 
-### Key Files
+## Code and documentation conventions
 
-- `__init__.py` - Integration setup and platform loading
-- `api.py` - Tado X API client
-- `coordinator.py` - Data update coordinator and data models
-- `config_flow.py` - Configuration flow (OAuth2)
-- `climate.py` - Climate entity (room control)
-- `sensor.py` - Sensor entities
-- `binary_sensor.py` - Binary sensor entities
-- `const.py` - Constants and configuration
+- Follow Python's PEP 8 conventions and use type hints where appropriate.
+- Keep asynchronous Home Assistant operations non-blocking.
+- Preserve existing entity unique IDs, service/action names, and the `tado_x` domain unless a breaking change has been explicitly agreed.
+- Keep API calls and error handling consistent with the existing client and coordinator patterns; avoid unnecessary polling or additional API usage.
+- Update `services.yaml`, `strings.json`, and relevant `translations/*.json` entries when changing actions or user-visible text. Avoid unescaped curly braces in translated descriptions because Home Assistant may interpret them as formatting placeholders.
+- Update the README, implementation documentation, and `CHANGELOG.md` when user-facing behaviour changes.
+- Preserve the MIT licence and copyright notices, including `Copyright (c) 2026 Robin Leatherbarrow` and  `Copyright (c) 2025 Exabird`.
 
-### Adding a New Feature
+## Architecture and areas requiring particular care
 
-1. **API Client** (`api.py`): Add API method if needed
-2. **Coordinator** (`coordinator.py`): Update data models if needed
-3. **Entity Platform**: Add/modify entities as needed
-4. **Services** (`services.yaml`): Define service if adding control
-5. **Strings** (`strings.json`): Add localized strings
-6. **Tests**: Add or update tests
+The integration is built around `custom_components/tado_x/`. Relevant modules include:
 
-### Example: Adding a Service
+| File | Responsibility |
+| :--- | :--- |
+| `__init__.py` | Integration setup and action registration |
+| `api.py` | Tado X API requests |
+| `coordinator.py` | Home and room data updates |
+| `config_flow.py` | Configuration and options flows |
+| `climate.py` | Room climate entities |
+| `sensor.py`, `binary_sensor.py`, `select.py`, `button.py` | Home Assistant entities |
+| `schedule_profiles.py` | Named room schedules and home-wide defaults |
+| `services.yaml` | Action definitions and input selectors |
+| `strings.json`, `translations/` | Localised user-facing text |
 
-1. Add API method in `api.py`:
-   ```python
-   async def set_temperature_offset(self, device_id: str, offset: float) -> None:
-       """Set temperature offset for a device."""
-       # Implementation
-   ```
+When applicable, test the following:
 
-2. Add service definition in `services.yaml`:
-   ```yaml
-   set_temperature_offset:
-     name: Set Temperature Offset
-     description: Adjust the temperature offset for a Tado X device
-     fields:
-       device_id:
-         description: Device serial number
-         required: true
-         selector:
-           text:
-       offset:
-         description: Temperature offset in °C
-         required: true
-         selector:
-           number:
-             min: -9.9
-             max: 9.9
-             step: 0.1
-   ```
+- **Multiple homes:** correct routing by home ID, including overlapping room IDs and home-specific options.
+- **Schedules:** read/write operations, 24-hour coverage, Away configuration, profile saving/restoring, home-wide defaults, and custom profile creation/deletion.
+- **Climate control:** manual overrides, timer termination, and return to scheduled control.
+- **Hot water:** scheduled operation, Off, Away settings, and boosts.
+- **Entities:** unique IDs, names, availability, restored entity IDs, and device association.
+- **API usage:** polling frequency, quota reporting, authentication failures, rate limits, and transient network failures.
+- **Compatibility:** existing Home Assistant installations and unchanged public action names.
 
-3. Register service in `__init__.py`:
-   ```python
-   async def async_setup_entry(hass, entry):
-       # ... existing code ...
+Tests requiring real hardware should be identified as such. Do not claim that an untested change has been verified against the Tado service.
 
-       async def handle_set_temperature_offset(call):
-           """Handle set temperature offset service."""
-           device_id = call.data["device_id"]
-           offset = call.data["offset"]
-           await api.set_temperature_offset(device_id, offset)
+## Pull request checklist
 
-       hass.services.async_register(
-           DOMAIN,
-           "set_temperature_offset",
-           handle_set_temperature_offset,
-       )
-   ```
+- [ ] The change addresses a documented bug or clearly explained enhancement.
+- [ ] Python syntax and relevant JSON/YAML files have been checked.
+- [ ] Affected behaviour has been tested, or testing limitations are clearly stated.
+- [ ] Multi-home behaviour and backward compatibility have been considered.
+- [ ] Translations and documentation have been updated where needed.
+- [ ] No credentials, private data, generated caches, or debug artefacts are included.
 
-## Feature Roadmap
+## Licence and attribution
 
-Current priorities based on user requests:
+Contributions are submitted under the repository's [MIT License](LICENSE). This project is derived from the original Tado X integration by Exabird. Please retain existing copyright and licence notices.
 
-1. **Away preset** (Issue #2) - Geofencing support
-2. **Temperature offset service** (Issue #3) - Device calibration
-3. **Open window detection toggle** - Per-room control
-4. **Child lock control** - Device safety settings
+For questions or proposals, use the [GitHub issue tracker](https://github.com/rleatherb/ha-tado-x-enhanced/issues).
 
-## Questions?
-
-- **Technical questions:** Open a discussion on GitHub
-- **Bug reports:** Use the [bug report template](https://github.com/exabird/ha-tado-x/issues/new?template=bug_report.md)
-- **Feature ideas:** Use the [feature request template](https://github.com/exabird/ha-tado-x/issues/new?template=feature_request.md)
-
-Thank you for contributing! 🏠

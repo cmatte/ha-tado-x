@@ -1,237 +1,230 @@
-# Tado X Integration for Home Assistant
+# Tado X Enhanced for Home Assistant
 
-> **Fork** of [exabird/ha-tado-x](https://github.com/exabird/ha-tado-x) with fixes for the Home Assistant 2027.7/2027.8/2027.11 deprecations (`via_device`, `location_name`, `temperature_unit`), sent upstream as a pull request. Same `tado_x` domain: entity ids do not change.
+> **This is cmatte/ha-tado-x, a fork tracking [Tado X Enhanced](https://github.com/rleatherb/ha-tado-x-enhanced) v1.1.1** plus two fixes proposed upstream: serialised token refreshes (no more `Failed to refresh token: 400` when several calls run at once) and Home Assistant's SSL context for device login. Once they are merged upstream, use Tado X Enhanced directly.
 
-[![hacs_badge](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
-[![GitHub Release](https://img.shields.io/github/v/release/exabird/ha-tado-x)](https://github.com/exabird/ha-tado-x/releases)
-[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-Support-yellow?style=flat&logo=buy-me-a-coffee)](https://buymeacoffee.com/exabird)
 
-A Home Assistant custom integration for **Tado X** devices (the new generation of Tado smart thermostats and radiator valves).
+An independently maintained custom integration for controlling and monitoring **Tado X** systems in [Home Assistant](https://www.home-assistant.io/).
 
-> **Note:** This integration is specifically designed for Tado X devices. For older Tado devices (V3+ and earlier), use the [official Tado integration](https://www.home-assistant.io/integrations/tado/).
+Tado X Enhanced builds on the original [Tado X integration by exabird](https://github.com/exabird/ha-tado-x) (version v1.8.11), adding multi-home support, Home and Away schedule management, reusable schedule profiles, domestic hot-water controls, richer room diagnostics and API quota forecasting.
 
----
+> **Project status:** Version: `1.1.1`. See [GitHub Releases](https://github.com/rleatherb/ha-tado-x-enhanced/releases) for the latest published version. Some features depend on your Tado hardware, subscription and API responses. This is a cloud-based integration and is subject to Tado API limits. Code development and documentation assisted by AI.
 
-## Quick Installation (HACS)
+**[Changelog](CHANGELOG.md)** · [Report an issue](https://github.com/rleatherb/ha-tado-x-enhanced/issues) · [Releases](https://github.com/rleatherb/ha-tado-x-enhanced/releases)
 
-### Step 1: Add the repository
-[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=exabird&repository=ha-tado-x&category=integration)
+## Highlights
 
-**Or manually:**
-1. Open HACS in Home Assistant
-2. Click **⋮** (top right) → **Custom repositories**
-3. Add `https://github.com/exabird/ha-tado-x` as **Integration**
+- **Multiple homes:** Configure more than one Tado home, with separate coordinators, home-scoped operations and profile storage. Rooms with the same numerical ID in different homes remain distinct.
+- **Heating control:** Room thermostats, manual overrides, termination modes, open-window detection and home-wide heating quick actions. Ensures Home Assistant thermostat cards behave the same way as when temperature is changed on a Tado device.
+- **Schedules:** Read and change Home schedules and Away settings; inspect next schedule changes, target temperatures and power states. Added `next_schedule_change`, `next_schedule_temperature`, and `next_schedule_power` sensors for each room.
+- **Schedule profiles:** Save and restore **Normal**, **Alternative**, **Eco** and **Not in use** profiles per room, with separate home-wide defaults and factory fallbacks. As well as these four pre-defined schedule types, additional unlimited named profiles can also be added. A **Custom** state identifies schedules that do not match a saved profile.
+- **Holiday mode:** Get and set Holiday mode (requires Tado Auto-Assist subscription)
+- **Historic data:** Retrieve historic data for temperature, humidity and heating (requires Tado Auto-Assist subscription for days before today).
+- **Hot water:** Where supported, view hot-water state, choose Schedule/Off/Boost and inspect boost or schedule-change timing.
+- **Open window status:** Open window expiry and remaining time available via `open_window_detected`, `open_window_ends_at`, and `open_window_remaining_minutes `climate attributes.
+- **API monitoring:** Track quota limit, remaining calls, current usage and estimated daily usage. Learn the approximate reset time from server-reported quota observations rather than assuming a fixed clock time.
+- **Additional data:** Heating running time, weather, air comfort, mobile presence and Energy IQ actions where supported and enabled.
+- **Five languages:** English, German, French, Italian and Spanish.
 
-### Step 2: Install & Restart
-1. Search "Tado X" in HACS → **Download**
-2. **Restart Home Assistant**
+## Installation through HACS
 
-### Step 3: Configure
-1. Go to **Settings** → **Devices & Services** → **Add Integration**
-2. Search "Tado X" and follow the authentication flow
+This repository is public and can be added to HACS as a custom repository. See [GitHub Releases](https://github.com/rleatherb/ha-tado-x-enhanced/releases) for the latest published version:
 
----
+1. Install [HACS](https://www.hacs.xyz/) if it is not already installed.
+2. In Home Assistant, open **HACS → Custom repositories**.
+3. Add `https://github.com/rleatherb/ha-tado-x-enhanced` and select **Integration**.
+4. Open the repository entry in HACS and select **Download**.
+5. Restart Home Assistant.
+6. Go to **Settings → Devices & services → Add integration**, search for **Tado X Enhanced**, and complete authentication and home selection.
+7. Complete the **Configuration** settings as described below, to be consistent with your Auto-Assist subscription. Having this subscription is strongly recommended for optimum use, allowing a frequent Main update interval and allowing Schedule polling.
 
-## Features
+This is a **custom repository** installation; inclusion in the default HACS catalogue is not required. Exact HACS menu labels can vary by version.
 
-| Entity Type | Features |
-|-------------|----------|
-| **Climate** | Temperature control, HVAC modes (Heat/Off/Auto), Preset modes (Schedule/Boost/Home/Away/Auto) |
-| **Sensors** | Temperature, Humidity, Heating power, Battery status, **API usage monitoring**, **Weather** (outdoor temp, solar intensity), **Air comfort** (freshness, comfort level), **Heating time today** |
-| **Binary Sensors** | Window open, Heating active, Manual control, Connectivity, Low battery |
-| **Switches** | **Child lock** (per device), **Open window** control (per room) |
-| **Buttons** | **Boost All**, **Turn Off All**, **Resume Schedules** (quick actions) |
-| **Device Tracker** | **Mobile devices** for geofencing (home/away status) |
-| **Services** | Temperature offset, Meter reading, **Energy tariff** (Energy IQ) |
+### Replacing an existing Tado X installation
 
-### Climate Presets
+Tado X Enhanced uses the same Home Assistant integration domain, `tado_x`, as Exabird's original integration. **It is a replacement, not a second integration that can run alongside the original.** Preserving the domain is intended to retain existing configuration entries and entity identities, but migration from every older version has **not** been verified.
 
-- **Schedule**: Follow the smart schedule
-- **Boost**: Quick temperature boost
-- **Home**: Manually set presence to Home (override geofencing)
-- **Away**: Manually set presence to Away (override geofencing)
-- **Auto (Geofencing)**: Enable automatic presence detection
+**Back up Home Assistant before switching.** Make a complete backup including configuration entries, `.storage` data and custom integrations. Record important entity IDs and the configured Tado homes, and ensure the backup can be restored.
 
-### Quick Actions (Buttons)
+Carry out the following HACS handover.
 
-Home-level controls for managing all zones at once:
-- **Boost All**: Activate boost mode on all heating zones simultaneously
-- **Turn Off All**: Disable heating in all zones (useful when leaving)
-- **Resume Schedules**: Cancel all manual overrides and return to smart schedules
+1. **Register the Enhanced repository.** In HACS, add `https://github.com/rleatherb/ha-tado-x-enhanced` as a custom **Integration** repository. Both repository entries may initially appear separately in HACS, although they use the same integration domain.
+2. **Remove the original Exabird installation through HACS.** Open the original **Tado X** repository entry in HACS and select **Remove**. You will see a warning: *Integration is configured*. Select **IGNORE** to bypass this warning, then **REMOVE** on the subsequent confirmation. **Do not use NAVIGATE to delete the Home Assistant integration configuration, and do not remove the Tado X homes under Settings → Devices & services.** The HACS removal temporarily removes the old integration files; do not restart Home Assistant at this point.
+3. **Download Tado X Enhanced.** Open its HACS repository entry and select **Download**. Confirm that the target directory is `/config/custom_components/tado_x` and that HACS reports **Pending restart**. Complete this download **before restarting Home Assistant**. If the download fails, do not restart until you have restored a working integration package or planned recovery from your backup.
+4. **Restart Home Assistant once**, after the Enhanced files are in place.
+5. **Verify the migration.** Check that the original Tado home entries load, existing climate and other entity IDs remain available, and no duplicate devices appear. Inspect Home Assistant logs. Verify any relevant hot-water and schedule controls before relying on them. For multiple homes, check both homes and room-specific routing.
+6. **Confirm HACS ownership.** Ensure **Tado X Enhanced** is shown as installed in HACS and the original Exabird repository is no longer shown as installed.
 
-### Services
+**After migration:** All existing homes should be loaded, and all existing devices remain. The number of entities will be increased significantly as Enhanced entities become available. Check the configuration of your installed homes (see below) to ensure that the new schedule checking is consistent with your Auto-Assist subscription limits and you have enabled all the required features.
 
-- **set_temperature_offset**: Calibrate device temperature readings (-9.9°C to +9.9°C)
-- **add_meter_reading**: Upload meter readings to Tado Energy IQ
-- **set_eiq_tariff**: Set energy tariffs for cost calculations in Energy IQ
-  - Supports both m³ (gas) and kWh (electricity) units
-  - Define tariff periods with start/end dates
-  - Enables accurate cost tracking in Tado's Energy IQ dashboard
+**Important:** Removing downloaded integration files through HACS is different from deleting a Home Assistant integration configuration entry, which can remove entities and integration-managed information. If replacement fails, restore your backup and report the problem with redacted logs.
 
-### API Usage Monitoring
+## Detailed documentation
 
-Five sensors help you track API quota usage (values read directly from Tado API headers when available):
-- **API calls today**: Number of API requests since midnight
-- **API quota remaining**: Remaining requests
-- **API quota limit**: Your daily quota (auto-detected from API: 100 free, 20,000 with Auto-Assist)
-- **API usage**: Percentage of daily quota used
-- **API reset time**: When the quota resets
+- [Configuration](docs/CONFIGURATION.md)
+- [Schedules and schedule profiles](docs/SCHEDULES.md)
+- [Actions reference](docs/ACTIONS.md)
+- [Devices, entities and attributes](docs/ENTITIES.md)
+- [Usage examples](docs/EXAMPLES.md)
+- [Technical architecture](docs/ARCHITECTURE.md)
 
-These sensors use **real values from Tado API response headers** when available, providing accurate quota tracking.
+## Configuration
 
-## Supported Devices
+Each configured Tado home has its own options under **Settings → Devices & services → Tado X → Configure**.
 
-| Model | Device |
-|-------|--------|
-| VA04 | Radiator Valve X |
-| SU04 | Temperature Sensor X |
-| TR04 | Thermostat X |
-| IB02 | Bridge X |
+| Setting | Purpose |
+| :--- | :--- |
+| Auto-Assist subscription | Sets subscription-related defaults and feature availability assumptions. |
+| Main update interval | General integration polling, in seconds (configuration range: 30–3600). |
+| Automatically check for schedule changes | Enable periodic Home/Away schedule comparisons. Defaults to on for Auto-Assist and off otherwise, unless explicitly set. |
+| Schedule check interval | Separate schedule polling interval: 900–86400 seconds (15 minutes–24 hours); default 3600 seconds. |
+| Weather | Enable weather data where available. |
+| Mobile devices | Enable mobile presence/tracker data. |
+| Air comfort | Enable air-comfort data. |
+| Running times | Enable heating running-time data. |
+| Flow temperature | Enable supported flow-temperature controls/data. |
+| Hot water | Enable domestic hot-water functionality where supported. |
 
-## API Rate Limits & Smart Polling
+**API usage matters:** A complete automatic schedule check uses approximately **two API calls per room** (one Home schedule and one Away settings read). For 10 rooms, hourly checks would use approximately **480 requests per day** for this feature alone. Manual profile operations and the **Refresh Schedule** button remain available when automatic schedule checking is disabled.
 
-Tado enforces daily API limits. This integration **automatically adapts** its polling interval based on your subscription:
+## Devices and entities
 
-| Subscription | Daily Limit | Auto Polling Interval | Actual Usage |
-|--------------|-------------|----------------------|--------------|
-| Without Auto-Assist | 5000 requests/day | Every 45 minutes | ~96 req/day ✅ |
-| With Auto-Assist | 20,000 requests/day | Every 30 seconds | ~2,880 req/day ✅ |
+Available entities vary with hardware, account capabilities and configuration.
 
-### Configuration Options
+| Device type | Main entities and controls |
+| :--- | :--- |
+| **Tado X Home** | Home ID; presence sensors/select; API quota, calls, current usage, estimated daily usage and reset time; home-wide heating buttons; supported hot-water sensors, mode selector and buttons; flow-temperature controls. |
+| **Tado X Room** | Climate thermostat; temperature, humidity, heating power and running time; next schedule change, temperature and power; open-window/heating/override status; termination settings; save/restore profile selectors; **Refresh Schedule** button. |
+| **Physical Tado X device** | Battery, device temperature, temperature offset, connection state, low-battery status and child lock where supported. |
+| **Weather / air comfort / mobile** | Optional weather, comfort and presence entities. |
 
-Go to **Settings** → **Devices & Services** → **Tado X** → **⚙️ Configure** to:
+### Room schedule profiles
 
-- **Enable Auto-Assist**: Toggle if you have an Auto-Assist subscription
-- **Custom polling interval**: Override the automatic interval (30s - 3600s)
-- **Enable weather sensors**: Outdoor temperature, solar intensity, weather state (+1 API call)
-- **Enable mobile device tracking**: Device tracker for geofencing (+1 API call)
-- **Enable air comfort sensors**: Air freshness and comfort level per room (+1 API call)
-- **Enable heating time sensors**: Daily heating runtime per room (+1 API call)
+The four named profiles are **Normal**, **Alternative**, **Eco** and **Not in use**. Each profile can store the room's full Home weekly schedule **and** Away configuration (including Away temperature and preheating where supported).
 
-**Note:** Optional features are disabled by default for free tier users to optimize API usage. Auto-Assist users have all features enabled by default.
+A room-specific saved profile takes precedence over the home-wide default when restored normally. To apply the home-wide default to a room explicitly, use `tado_x.restore_schedule_profile_default` in **Developer Tools → Actions**; to save the room's current schedule as the home-wide default, use `tado_x.save_schedule_profile_default`. The corresponding device-page default selectors were removed. Saving or resetting a default does **not** immediately change active room schedules.
 
-### API Counter Persistence
+The integration initially captures the current room schedule as **Normal** if that room profile is missing. The **Custom** indication is based on the latest comparison; when automatic checks are off, use **Refresh Schedule** to detect changes made outside Home Assistant. Additional profile names can be created separately for each home.
 
-The API call counter is **persisted across restarts** - your quota tracking continues accurately even after Home Assistant reboots.
+## Actions
 
-## Troubleshooting
+The integration exposes **19 actions** under `tado_x` in **Developer Tools → Actions**:
 
-**Authentication issues:** Go to Settings → Devices & Services → Tado X → **⋮** → Reconfigure
+| Category | Actions |
+| :--- | :--- |
+| Temperature and Energy IQ | `set_temperature_offset`, `add_meter_reading`, `set_eiq_tariff`, `set_climate_timer` |
+| Home and Away schedules | `get_schedule`, `set_schedule`, `get_away_schedule`, `set_away_schedule` |
+| History and holiday mode | `get_day_report`, `get_holiday_mode`, `set_holiday_mode` |
+| Schedule profiles | `save_schedule_profile`, `restore_schedule_profile`, `list_schedule_profiles`, `create_schedule_profile`, `delete_schedule_profile`, `save_schedule_profile_default`, `restore_schedule_profile_default`, `reset_schedule_default` |
 
-**Rate limiting:** If entities become unavailable, you may have exceeded the daily limit. Wait until the next day or get Auto-Assist subscription.
+See the [complete actions reference](docs/ACTIONS.md) for parameters and home/room targeting.
 
-## Manual Installation
+Example — set a temperature for 60 minutes:
 
-1. Download `custom_components/tado_x` from this repository
-2. Copy to your `config/custom_components/` directory
-3. Restart Home Assistant
+```yaml
+action: tado_x.set_climate_timer
+data:
+  entity_id: climate.living_room
+  temperature: 21
+  termination_type: TIMER
+  duration: 60
+```
 
----
+For `MANUAL` and `NEXT_TIME_BLOCK`, specify the desired temperature and omit `duration`. The `entity_id` above is an example and must match your installation.
 
-## Contributing
+When more than one Tado home is configured, home-level actions require selecting the appropriate **Tado X Home device**; room actions are routed through their room climate entity.
 
-This is a community-maintained integration for Tado X devices. Contributions are welcome!
+## Climate attributes and diagnostics
 
-### Reporting Issues
+Room climate entities may expose `manual_control_active`, `manual_control_type`, `manual_control_remaining_minutes`, `heating_power`, `next_schedule_change`, `next_schedule_temperature`, `open_window_detected`, `open_window_ends_at` and `open_window_remaining_minutes`, where data is available. The next scheduled power state is available as a separate sensor. `hvac_action` is a standard Home Assistant climate property and depends on available heating-state data.
 
-Found a bug or have a feature request? Please use our issue templates:
-- [Report a Bug](https://github.com/exabird/ha-tado-x/issues/new?template=bug_report.md)
-- [Request a Feature](https://github.com/exabird/ha-tado-x/issues/new?template=feature_request.md)
+The Restore schedule profile selector also exposes match information such as `match_status`, `matching_profiles`, `last_applied_profile` and `saved_profiles`.
 
-### Development
+### API usage estimates
 
-Want to contribute code? Great! Here's how to get started:
+- **API current usage** reports the proportion of the daily quota consumed.
+- **API reset time** is estimated from a substantial drop in server-reported calls used. It can remain `unknown` until a reset has been observed.
+- **API estimated daily usage** extrapolates consumption from elapsed time since the observed reset; it can exceed **100%**. It is deliberately unavailable during the first hour after a reset.
 
-1. Fork this repository
-2. Create a branch for your feature: `git checkout -b feature/my-feature`
-3. Make your changes
-4. Test thoroughly with your Tado X setup
-5. Submit a pull request
+These calculations do not require additional API calls. They are estimates, not guarantees of Tado's future quota behaviour. Do not assume separate home sensors represent separate quota pools without verifying account-level reporting.
 
-### Roadmap
+## Compatibility and limitations
 
-**Recently Implemented:**
-- [x] Away preset (geofencing) - [Issue #2](https://github.com/exabird/ha-tado-x/issues/2) ✅ v1.1.0
-- [x] Temperature offset adjustment service - [Issue #3](https://github.com/exabird/ha-tado-x/issues/3) ✅ v1.1.0
-- [x] API usage monitoring sensors - [Issue #4](https://github.com/exabird/ha-tado-x/issues/4) ✅ v1.3.0
-- [x] Meter reading service (Energy IQ) - [Issue #5](https://github.com/exabird/ha-tado-x/issues/5) ✅ v1.2.0
-- [x] Smart polling based on subscription tier - [Issue #4](https://github.com/exabird/ha-tado-x/issues/4) ✅ v1.3.2
-- [x] API counter persistence across restarts ✅ v1.3.2
-- [x] Configurable polling interval ✅ v1.3.2
-- [x] Real API quota values from response headers ✅ v1.3.3
-- [x] Fix meter reading API endpoint - [Issue #7](https://github.com/exabird/ha-tado-x/issues/7) ✅ v1.3.4
-- [x] Open window detection toggle ✅ v1.4.0
-- [x] Child lock control ✅ v1.4.0
-- [x] Quick actions (Boost All, Turn Off All, Resume Schedules) ✅ v1.5.0
-- [x] Energy IQ tariff management ✅ v1.5.0
-- [x] Weather sensors (outdoor temp, solar intensity, weather state) ✅ v1.6.0
-- [x] Air comfort sensors (freshness, comfort level per room) ✅ v1.6.0
-- [x] Mobile device tracking (geofencing home/away) ✅ v1.6.0
-- [x] Heating time sensors (daily runtime per room) ✅ v1.6.0
-- [x] Configurable feature toggles to optimize API usage ✅ v1.6.0
+- This is a **cloud-polling** integration; a working Tado account and internet connection are required.
+- Some functionality requires compatible hardware, enabled options, or Tado Auto-Assist/API access.
+- Tado's API is not controlled by this project and may change or impose request limits.
+- Multiple homes are supported, but verify service targeting and quota reporting when configuring more than one home.
+- The minimum supported Home Assistant release has **not yet been established by testing**. Do not infer compatibility solely from the manifest version.
+- The original `1.0.0` release was validated on a separate Home Assistant test installation, including a HACS handover from the original Exabird integration. Version `1.1.0` passed regression testing, including Home Assistant 2026.11 climate compatibility checks. For `1.1.1`, the maintainer confirmed that the Holiday Mode date-update correction works against the live Tado API; a complete regression run on both homes has not been reported. Compatibility with every earlier installation and Home Assistant release has not been established.
 
-**Planned features:**
+## Releases and changes
 
-| Feature | Description | Priority |
-|---------|-------------|----------|
-| **Historic Data** | Historical temperature, humidity, and heating data | Medium |
-| **Schedule Management** | Read and modify heating schedules from Home Assistant | Medium |
-| **Flow Temperature Optimization** | Boiler flow temperature control for energy savings | Low |
-| **Away Radius Configuration** | Configure geofencing radius for presence detection | Low |
+See **[CHANGELOG.md](CHANGELOG.md)** and [CONTRIBUTING.md](CONTRIBUTING.md) for the initial feature set, compatibility notes and all future release changes. Versioning follows [Semantic Versioning](https://semver.org/).
 
-See [all feature requests](https://github.com/exabird/ha-tado-x/issues?q=is%3Aissue+is%3Aopen+label%3Aenhancement) for the full list and to vote on priorities.
+## Issues and contributions
 
-## Why This Integration Exists
+Please use [GitHub Issues](https://github.com/rleatherb/ha-tado-x-enhanced/issues) for reproducible bugs and feature requests. Include your Home Assistant version, integration version, relevant entity type and redacted debug logs. **Never post access tokens, refresh tokens or other account credentials.**
 
-Tado X devices use a different API than previous Tado generations. While Tado recommends using Matter integration, many users experience significant issues with Matter setup:
+## Credits and licence
 
-- **Greyed-out pairing buttons** preventing Matter device linking
-- **Failed pairing attempts** with cryptic error messages
-- **Tado's official solution** requires a [full device reset](https://help.tado.com/en/articles/10264695-how-can-i-fix-matter-device-linking-errors) - impractical for remote installations (vacation homes, rental properties, elderly parents' homes)
+Tado X Enhanced is an **independently maintained derivative** of the original [ha-tado-x project by Exabird](https://github.com/exabird/ha-tado-x). The original integration and its contributors are acknowledged with thanks. This project is independently maintained and is not affiliated with or endorsed by Tado or the original maintainer.
 
-### Why Not an Official Home Assistant Integration?
+This project is distributed under the **[MIT License](LICENSE)**. The licence file preserves the original copyright notice and identifies the subsequent enhancements:
 
-The Home Assistant team has chosen not to add Tado X support to the official Tado integration. Based on community discussions, this decision was made at Tado's request - they don't want third-party integrations using their cloud API because "it costs them money".
+- **Copyright (c) 2025 Exabird** — original integration.
+- **Copyright (c) 2026 Robin Leatherbarrow** — subsequent modifications and enhancements.
 
-But here's the thing: **users pay for this API access**. We buy Tado devices knowing an API exists. Many of us pay an additional Auto-Assist subscription specifically for extended API access. So why restrict how we use what we're already paying for?
+The MIT licence permits use, modification and redistribution subject to retention of the required copyright and permission notices. See the complete [LICENSE](LICENSE) file for its terms and warranty disclaimer.
 
-The only official alternative is Matter, which is extremely limited compared to Tado's own app:
-- No boost mode or presets
-- No temperature offset calibration
-- No Energy IQ or meter readings
-- No detailed heating statistics
-- No child lock controls
+Project maintenance and GitHub code ownership: [@rleatherb](https://github.com/rleatherb).
 
-And unlike most smart home manufacturers, Tado provides **no local API** - neither on their classic devices nor on the new Tado X line. This leaves cloud API as the only way to get full functionality.
 
-**This is why ha-tado-x exists.** This integration uses Tado's official cloud API to provide what paying customers deserve: full Home Assistant integration for Tado X users who:
-- Cannot get Matter working (greyed-out buttons, failed pairing)
-- Have remote installations where device resets aren't feasible
-- Need features that Matter simply doesn't support
-- Want to actually use the API they're paying for
 
-## Support the Project
+### Holiday Mode
 
-If you find this integration useful and it saved you time or solved your Tado X / Home Assistant integration challenges, consider supporting its continued development!
+The Tado X Home device has Holiday Mode, Holiday Status, Holiday Start, Holiday End and Refresh Holiday Mode entities. An expired holiday switched on through Home Assistant is rescheduled to start immediately for seven days. Explicit dates in `tado_x.set_holiday_mode` remain unchanged. Holiday state refreshes independently at the configured schedule polling interval and at holiday boundaries.
 
-<a href="https://buymeacoffee.com/exabird" target="_blank">
-  <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="50">
-</a>
+### Holiday date display and hot-water states
 
-Your support helps me:
-- Dedicate time to maintaining and improving this integration
-- Respond quickly to bug reports and feature requests
-- Keep the project compatible with Home Assistant updates
-- Add new features from the roadmap
+The Home device now also provides **Holiday Start (Local)** and **Holiday End (Local)**, displaying absolute local dates and times. The original timestamp entities remain unchanged for automations. During active holidays, `HOLIDAY_MODE_OFF` is recognised as a hot-water state and shown as Off by the Hot Water Mode selector. Holiday changes refresh hot-water state promptly.
 
-Every coffee fuels another contribution to the community!
+**Known Tado behaviour:** After cancelling Holiday Mode, Tado may leave domestic hot water Off instead of restoring Schedule, including when the holiday was controlled entirely in the Tado app. Tado X Enhanced reports the API state and does not automatically restore Schedule. If necessary, restore Schedule manually.
 
-## Support
+This appears to be a bug in the current Tado implementation that is found if you have water heating set to Scheduled, with Off when Away, and Holiday Mode is set while the status is Away. On ending Holiday Mode, the Hot Water status reverts to permanently Off rather than Scheduled.
 
-- **Community Forum:** Discuss on [Home Assistant Community](https://community.home-assistant.io/)
-- **Issues:** Report bugs or request features on [GitHub Issues](https://github.com/exabird/ha-tado-x/issues)
-- **Hardware Support:** For Tado device issues, contact [Tado Support](https://support.tado.com/)
+The following automation example can be used to ensure that Hot Water Mode is always reset to Scheduled whenever Holiday Mode ends (replace `sensor.home_holiday_status` and `select.home_hot_water_mode` with the settings for your Tado home).
 
-## License
+```yaml
+alias: Restore hot water schedule mode when holiday mode ends
+description: ''
+triggers:
+  - trigger: state
+    entity_id:
+      - sensor.home_holiday_status
+    to:
+      - ended
+      - 'off'
+    id: Holiday Status Ended
+conditions: []
+actions:
+  - choose:
+      - conditions:
+          - condition: trigger
+            id:
+              - Holiday Status Ended
+        sequence:
+          - delay:
+              hours: 0
+              minutes: 1
+              seconds: 0
+              milliseconds: 0
+          - action: select.select_option
+            metadata: {}
+            target:
+              entity_id: select.home_hot_water_mode
+            data:
+              option: SCHEDULE
+mode: queued
+max: 10
 
-MIT License - see [LICENSE](LICENSE) file for details.
+```
+
